@@ -62,6 +62,8 @@ test("inspectLayout refuses anything it cannot prove: missing, duplicated, or co
 	assert.equal(inspectLayout(UNPATCHED.replace(ANCHOR, 'const sections = ["todo", "jobs", "agents", "stats", "footer"].filter(')), "unknown");
 	assert.equal(inspectLayout(UNPATCHED + UNPATCHED), "unknown");
 	assert.equal(inspectLayout(UNPATCHED.replace("state.parts.get(key)", "registry.get(key)")), "unknown");
+	const commented = UNPATCHED.replace(`\t\t\t${ANCHOR}`, `\t\t\t// was: ${ANCHOR}\n\t\t\tconst sections = ["todo", "stats"].filter(`);
+	assert.equal(inspectLayout(commented), "unknown", "an anchor that is not code at the start of its line is refused");
 	const patched = patchSource(UNPATCHED).source!;
 	assert.equal(inspectLayout(patched + UNPATCHED), "unknown", "patched and unpatched at once");
 	assert.equal(patchSource(UNPATCHED + UNPATCHED).source, undefined);

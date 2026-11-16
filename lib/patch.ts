@@ -20,17 +20,20 @@ export type PatchStatus = "patched" | "unpatched" | "unknown" | "missing";
 
 const occurrences = (source: string, needle: string) => source.split(needle).length - 1;
 
-function followedByContext(source: string, needle: string): boolean {
-	const end = source.indexOf(needle) + needle.length;
-	return source.slice(end, end + CONTEXT_WINDOW).includes(CONTEXT);
+/** The single occurrence is code: only indentation before it on its line, the parts lookup right after. */
+function provenAt(source: string, needle: string): boolean {
+	const start = source.indexOf(needle);
+	const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+	const end = start + needle.length;
+	return /^[ \t]*$/.test(source.slice(lineStart, start)) && source.slice(end, end + CONTEXT_WINDOW).includes(CONTEXT);
 }
 
 /** Classify a layout source; anything not provably patched or unpatched is "unknown". */
 export function inspectLayout(source: string): Exclude<PatchStatus, "missing"> {
 	const anchors = occurrences(source, ANCHOR);
 	const patches = occurrences(source, PATCHED);
-	if (anchors === 1 && patches === 0 && followedByContext(source, ANCHOR)) return "unpatched";
-	if (patches === 1 && anchors === 0 && followedByContext(source, PATCHED)) return "patched";
+	if (anchors === 1 && patches === 0 && provenAt(source, ANCHOR)) return "unpatched";
+	if (patches === 1 && anchors === 0 && provenAt(source, PATCHED)) return "patched";
 	return "unknown";
 }
 
@@ -100,6 +103,10 @@ export function unpatchLayout(root: string | undefined): PatchReport {
 	writeAtomic(report.file, restored, statSync(report.file).mode & 0o777);
 	const backup = report.file + BACKUP_SUFFIX;
 	// A backup that no longer matches (gentle-pi changed under the patch) is kept for the user.
-	if (existsSync(backup) && readFileSync(backup, "utf8") === restored) rmSync(backup);
+	try {
+		if (existsSync(backup) && readFileSync(backup, "utf8") === restored) rmSync(backup);
+	} catch {
+		// The layout is already restored; a leftover backup is harmless.
+	}
 	return { ...report, status: "unpatched", changed: true };
 }

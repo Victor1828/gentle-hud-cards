@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Apply, remove, or inspect the gentle-pi rail patch. Rerun `patch` after every
 // gentle-pi update: it refuses (exit 2, nothing written) when the layout changed.
+// Exit codes: 0 ok, 1 gentle-pi missing, 2 refused, 3 write failed, 64 usage.
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { LAYOUT_FILE, patchLayout, railPatchStatus, unpatchLayout, type PatchReport } from "../lib/patch.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 
@@ -23,7 +25,14 @@ if (rest.length) {
 	root = locateGentlePi({ env: process.env, execPath: process.execPath, exists: existsSync });
 }
 
-const report: PatchReport = operation === "patch" ? patchLayout(root) : operation === "unpatch" ? unpatchLayout(root) : railPatchStatus(root);
+let report: PatchReport;
+try {
+	report = operation === "patch" ? patchLayout(root) : operation === "unpatch" ? unpatchLayout(root) : railPatchStatus(root);
+} catch (error) {
+	// Every layout write is a rename, so a failure leaves the layout as it was.
+	const code = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+	fail(3, `failed: ${code} writing in ${root ? dirname(join(root, LAYOUT_FILE)) : "gentle-pi"}; ${LAYOUT_FILE} was left unchanged.`);
+}
 const gentlePi = `gentle-pi ${report.version ?? "(unknown version)"}`;
 
 if (report.status === "missing") fail(1, `gentle-pi not found${root ? ` at ${root}` : ""} (set GENTLE_HUD_GENTLE_PI_ROOT or pass --root).`);

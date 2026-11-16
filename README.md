@@ -15,7 +15,7 @@ Extra Gentle Shell cards for Pi: **Contexto+**, **Engram**, **MCP**, and **Tools
 gentle-pi's rail draws a hard-coded list of sections. The patch changes exactly one line of `lib/shell-sidebar-layout.ts` in the installed gentle-pi so it also draws the `hud-*` parts between Agents and the Status footer:
 
 ```sh
-npm run rail:status    # patched | unpatched (exit 0), changed layout (exit 2), gentle-pi missing (exit 1)
+npm run rail:status    # patched | unpatched (exit 0), gentle-pi missing (exit 1), changed layout (exit 2), write failed (exit 3)
 npm run rail:patch     # apply; idempotent; writes lib/shell-sidebar-layout.ts.gentle-hud-backup
 npm run rail:unpatch   # restore the original bytes and remove the matching backup
 ```

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -47,6 +47,21 @@ test("an unknown layout is refused with exit 2 and left untouched", () => {
 		assert.deepEqual(run("unpatch", "--root", root), { code: 2, stdout: "", stderr: refusal });
 		assert.equal(readFileSync(file, "utf8"), changed);
 		assert.equal(existsSync(file + BACKUP_SUFFIX), false);
+	});
+});
+
+test("a write failure exits 3 with one line and leaves the layout unchanged", (t) => {
+	if (process.getuid?.() === 0) return t.skip("root ignores directory permissions");
+	withGentlePi(SOURCE, (root, file) => {
+		const lib = join(root, "lib");
+		chmodSync(lib, 0o555);
+		try {
+			assert.deepEqual(run("patch", "--root", root), { code: 3, stdout: "", stderr: `failed: EACCES writing in ${lib}; ${LAYOUT_FILE} was left unchanged.\n` });
+			assert.equal(readFileSync(file, "utf8"), SOURCE);
+			assert.equal(existsSync(file + BACKUP_SUFFIX), false);
+		} finally {
+			chmodSync(lib, 0o755);
+		}
 	});
 });
 
