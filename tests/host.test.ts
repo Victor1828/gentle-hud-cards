@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCardsComponent, loadNativeRenderCard, type CardProvider } from "../lib/host.ts";
+import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 
 const theme = { fg: (_role: string, text: string) => text };
 
@@ -19,6 +19,16 @@ test("loadNativeRenderCard returns undefined without a root, on import failure, 
 	assert.equal(await loadNativeRenderCard(undefined, async () => ({ renderCard: () => [] })), undefined);
 	assert.equal(await loadNativeRenderCard("/gp", async () => { throw new Error("gone"); }), undefined);
 	assert.equal(await loadNativeRenderCard("/gp", async () => ({})), undefined);
+});
+
+test("loadNativeSidebarPart imports lib/shell-sidebar.ts and degrades to undefined on any failure", async () => {
+	const fn = () => ({ render: () => [], invalidate() {} });
+	const seen: string[] = [];
+	assert.equal(await loadNativeSidebarPart("/gp", async (path) => (seen.push(path), { sidebarPart: fn })), fn);
+	assert.deepEqual(seen, ["/gp/lib/shell-sidebar.ts"]);
+	assert.equal(await loadNativeSidebarPart(undefined, async () => ({ sidebarPart: fn })), undefined);
+	assert.equal(await loadNativeSidebarPart("/gp", async () => { throw new Error("gone"); }), undefined);
+	assert.equal(await loadNativeSidebarPart("/gp", async () => ({})), undefined);
 });
 
 test("the cards component stacks every provider's card in order and skips empty ones", () => {

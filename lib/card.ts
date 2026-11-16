@@ -33,12 +33,17 @@ const MIN_WIDTH = 8;
 // Same mapping as gentle-pi: INFO keeps the plain border with an accent title;
 // every other tone paints frame and title in its own role.
 const frameRole = (tone: CardTone) => (tone === "info" ? "border" : tone);
-const titleRole = (tone: CardTone) => (tone === "info" ? "accent" : tone);
+export const titleRole = (tone: CardTone) => (tone === "info" ? "accent" : tone);
+
+/** Cut plain text to `width` columns, ending in … when it had to cut. */
+export function truncate(text: string, width: number): string {
+	const chars = [...text];
+	return chars.length <= width ? text : `${chars.slice(0, Math.max(0, width - 1)).join("")}…`;
+}
 
 function fit(text: string, width: number): string {
-	const chars = [...text];
-	if (chars.length <= width) return text + " ".repeat(width - chars.length);
-	return `${chars.slice(0, Math.max(0, width - 1)).join("")}…`;
+	const cut = truncate(text, width);
+	return cut + " ".repeat(Math.max(0, width - [...cut].length));
 }
 
 export function fallbackRenderCard(card: HudCard, theme: CardTheme, width: number): string[] {

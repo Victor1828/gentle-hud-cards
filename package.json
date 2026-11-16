@@ -9,7 +9,10 @@
 		"node": "^22.19.0 || >=23.6.0"
 	},
 	"scripts": {
-		"test": "node --experimental-strip-types --test tests/*.test.ts"
+		"test": "node --experimental-strip-types --test tests/*.test.ts",
+		"rail:status": "node --experimental-strip-types --no-warnings bin/rail-patch.ts status",
+		"rail:patch": "node --experimental-strip-types --no-warnings bin/rail-patch.ts patch",
+		"rail:unpatch": "node --experimental-strip-types --no-warnings bin/rail-patch.ts unpatch"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

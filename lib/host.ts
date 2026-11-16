@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { renderHudCard, type CardTheme, type HudCard, type NativeRenderCard } from "./card.ts";
+import type { SidebarPartFn } from "./rail.ts";
 
 export interface CardProvider {
 	key: string;
@@ -19,6 +20,17 @@ export async function loadNativeRenderCard(root: string | undefined, importer: I
 	try {
 		const mod = await importer(join(root, "lib", "shell-card.ts"));
 		return typeof mod.renderCard === "function" ? (mod.renderCard as NativeRenderCard) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** gentle-pi's `sidebarPart` (lib/shell-sidebar.ts), or undefined when it cannot load. */
+export async function loadNativeSidebarPart(root: string | undefined, importer: Importer = (path) => import(path)): Promise<SidebarPartFn | undefined> {
+	if (!root) return undefined;
+	try {
+		const mod = await importer(join(root, "lib", "shell-sidebar.ts"));
+		return typeof mod.sidebarPart === "function" ? (mod.sidebarPart as SidebarPartFn) : undefined;
 	} catch {
 		return undefined;
 	}
