@@ -1,0 +1,49 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { fallbackRenderCard, renderHudCard, type HudCard, type NativeRenderCard } from "../lib/card.ts";
+
+// Tags every paint with its role so tests can assert which theme role was used.
+const theme = { fg: (role: string, text: string) => `<${role}>${text}</${role}>` };
+const plain = (line: string) => line.replace(/<\/?[a-zA-Z]+>/g, "");
+const card: HudCard = { key: "hud-test", title: "TEST", tone: "info", body: ["hello"] };
+
+test("fallback paints a rounded frame of the exact width with the INFO roles", () => {
+	const lines = fallbackRenderCard(card, theme, 20);
+	assert.deepEqual(lines.map(plain), ["╭─ ✿ TEST ─────────╮", "│ hello            │", "╰──────────────────╯"]);
+	assert.ok(lines[0].includes("<border>╭─ </border>"), "INFO frame uses the border role");
+	assert.ok(lines[0].includes("<accent>✿ TEST</accent>"), "INFO title uses the accent role");
+});
+
+test("fallback paints frame and title with the tone role for non-INFO tones", () => {
+	const lines = fallbackRenderCard({ ...card, tone: "warning" }, theme, 20);
+	assert.ok(lines[0].includes("<warning>╭─ </warning>"));
+	assert.ok(lines[0].includes("<warning>✿ TEST</warning>"));
+	assert.ok(lines[2].includes("<warning>╰"));
+});
+
+test("fallback truncates long body lines and titles to the width", () => {
+	const lines = fallbackRenderCard({ ...card, title: "A VERY LONG TITLE", body: ["0123456789012345678901234"] }, theme, 16);
+	for (const line of lines) assert.equal([...plain(line)].length, 16, plain(line));
+	assert.equal(plain(lines[1]), "│ 01234567890… │");
+});
+
+test("fallback renders nothing at widths too narrow for a frame", () => {
+	assert.deepEqual(fallbackRenderCard(card, theme, 4), []);
+});
+
+test("renderHudCard uses the native renderer with panel chrome when available", () => {
+	const calls: unknown[] = [];
+	const native: NativeRenderCard = (c, t, w, o) => {
+		calls.push({ c, w, o, t });
+		return ["native"];
+	};
+	assert.deepEqual(renderHudCard(card, theme, 30, native), ["native"]);
+	assert.deepEqual(calls, [{ c: { title: "TEST", subtitle: undefined, body: ["hello"], tone: "info" }, w: 30, o: { expanded: true, panel: true }, t: theme }]);
+});
+
+test("renderHudCard falls back when the native renderer throws or returns garbage", () => {
+	const expected = fallbackRenderCard(card, theme, 20);
+	assert.deepEqual(renderHudCard(card, theme, 20, () => { throw new Error("boom"); }), expected);
+	assert.deepEqual(renderHudCard(card, theme, 20, (() => "nope") as unknown as NativeRenderCard), expected);
+	assert.deepEqual(renderHudCard(card, theme, 20, undefined), expected);
+});
