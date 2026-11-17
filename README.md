@@ -2,7 +2,7 @@
 
 Extra Gentle Shell cards for Pi: **Contexto+**, **Engram**, **MCP**, and **Tools**. The logic is ported and adapted from [hudr2](https://github.com/Totopo27/hudr2) (MIT).
 
-> Status: renderer, fallback host, rail patch, and all four cards (**Contexto+**, **Engram**, **MCP**, **Tools**) are ready. End-to-end docs and checks land in a later task.
+> Status: complete. The four cards (**Contexto+**, **Engram**, **MCP**, **Tools**) render in the Gentle Shell rail on gentle-pi 4.8.0, with a below-editor fallback. `npm run e2e` checks the rail, the fallback, and a theme switch against the installed gentle-pi.
 
 ## How it renders
 
@@ -95,12 +95,63 @@ Add the package's absolute path to `packages` in the agent settings (`~/.gentle-
 { "packages": ["/Users/victor.vega/gentle-hud-cards"] }
 ```
 
-If gentle-pi is not installed next to the running `node` binary (`<prefix>/lib/node_modules/gentle-pi`), set `GENTLE_HUD_GENTLE_PI_ROOT` to its package root.
+If gentle-pi is not installed next to the running `node` binary (`<prefix>/lib/node_modules/gentle-pi`), set `GENTLE_HUD_GENTLE_PI_ROOT` to its package root. An override that has no `lib/shell-card.ts` is ignored, and the next location is tried.
+
+Then apply the rail patch and reload:
+
+```sh
+npm run rail:patch
+```
+
+Run `/reload` in Gentle Shell. The cards appear in the rail between Agents and Status once the terminal is wide enough for the rail (140 columns), and below the editor otherwise.
+
+## After a gentle-pi update
+
+1. `npm run rail:status`. An update replaces the installed files, so expect `unpatched`.
+2. `npm run rail:patch`. A refusal (exit 2) means the new version changed the layout. Nothing is written, and the cards stay below the editor until this package supports it.
+3. `npm run e2e` to check the rail, the fallback, and the theme against the new version.
+4. `/reload` in Gentle Shell.
+
+## Verify
+
+```sh
+npm run e2e
+```
+
+It runs the real extension against the installed gentle-pi, without a TTY.
+
+- **How**: it copies gentle-pi's `lib/` into a temp dir, once as the original layout (restored from the patch backup when the install is patched) and once patched. It loads the copies with Pi's own jiti loader and renders frames with Pi's real theme and pi-tui layout, using a fullscreen host at the rail breakpoint, as gentle-pi's own layout tests do.
+- **Read only**: the installed gentle-pi is never written. The temp dir is removed at the end.
+- **Exit codes**: 0 all checks passed, 1 a check failed, 2 gentle-pi or its Pi runtime was not found.
+
+| Check | Proves |
+| --- | --- |
+| `patch: ...` | The original layout is recovered and still patches cleanly, and the install itself is patched. |
+| `rail: ...` | The patched rail draws CONTEXT+, ENGRAM, MCP, and TOOLS in order above Status, with live data and no notice. The below-editor copy is blank while the rail owns the host. |
+| `theme: ...` | Switching Pi's theme from dark to light recolors the cards on the next frame and keeps the same text. |
+| `fallback: ...` | An unpatched rail draws no HUD card, one notice explains why, and the four cards stack below the editor through gentle-pi's `renderCard`. |
+
+The e2e uses fixed card data, so it never depends on the Engram daemon or your MCP config. It does not drive a live Gentle Shell window; check that by eye after `/reload`.
+
+## Uninstall
+
+```sh
+npm run rail:unpatch
+```
+
+Then remove the package path from `packages` in `~/.gentle-shell/agent/settings.json` and `/reload`. The unpatch restores the exact original bytes.
+
+## Known limits
+
+- **Future patch versions**: a layout that carries a newer `gentle-hud-cards:rail-patch` marker than this package knows is reported as `unknown` and refused. Restore it by hand from `lib/shell-sidebar-layout.ts.gentle-hud-backup`, or reinstall gentle-pi.
+- **MCP is configuration only**: Pi keeps live connection state private (see [MCP](#mcp)).
+- **Tool names**: `bash_background` and the `mem_*` names are taken from the Gentle Shell tool list. A tool named differently is counted as Other.
 
 ## Develop
 
 ```sh
-npm test   # node --experimental-strip-types --test tests/*.test.ts
+npm test       # unit tests: node --experimental-strip-types --test tests/*.test.ts
+npm run e2e    # end-to-end against the installed gentle-pi (see Verify)
 ```
 
 Node `^22.19.0 || >=23.6.0`. There are no runtime dependencies. The Pi packages are peer dependencies that the host provides.

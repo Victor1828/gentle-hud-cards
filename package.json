@@ -12,7 +12,8 @@
 		"test": "node --experimental-strip-types --test tests/*.test.ts",
 		"rail:status": "node --experimental-strip-types --no-warnings bin/rail-patch.ts status",
 		"rail:patch": "node --experimental-strip-types --no-warnings bin/rail-patch.ts patch",
-		"rail:unpatch": "node --experimental-strip-types --no-warnings bin/rail-patch.ts unpatch"
+		"rail:unpatch": "node --experimental-strip-types --no-warnings bin/rail-patch.ts unpatch",
+		"e2e": "node --experimental-strip-types --no-warnings bin/e2e.ts"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
