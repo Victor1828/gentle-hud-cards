@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import type { NativeRenderCard } from "../lib/card.ts";
 import { createContextProvider } from "../lib/cards/context-live.ts";
+import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { railPatchStatus, type PatchReport } from "../lib/patch.ts";
@@ -9,8 +10,8 @@ import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarP
 
 export const WIDGET_KEY = "gentle-hud-cards";
 
-// Cards register here as they land (T5 Engram, T6 MCP, T7 Tools).
-const providers: CardProvider[] = [createContextProvider()];
+// Cards register here as they land (T6 MCP, T7 Tools).
+const providers: CardProvider[] = [createContextProvider(), createEngramProvider()];
 
 export interface HudCardsDeps {
 	providers: CardProvider[];
@@ -49,6 +50,14 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 			}
 		};
 		for (const type of ["session_start", "turn_end", "message_end", "session_compact"]) pi.on(type as "turn_end", feed(type));
+		// Async providers (Engram's HTTP fetch) land between Pi events; redraw when they do.
+		for (const provider of cards) {
+			try {
+				provider.watch?.(() => requestRender?.());
+			} catch {
+				// A provider that cannot be watched still renders on Pi events.
+			}
+		}
 
 		pi.on("session_start", async (_event, ctx) => {
 			await loaded;

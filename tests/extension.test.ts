@@ -129,3 +129,16 @@ test("verifier: a provider without the hud- prefix is skipped by the extension",
 	await only.start();
 	assert.deepEqual([only.widgets.length, only.notices.length], [0, 0], "no valid provider is the zero-provider case");
 });
+
+test("T5: a provider's watch() change requests a render once the widget is mounted, and is ignored before it", async () => {
+	let listener: (() => void) | undefined;
+	const watched: CardProvider = { ...provider("hud-engram"), watch: (fn) => (listener = fn) };
+	const t = setup({ providers: [watched], patchStatus: () => report("unpatched") });
+	assert.ok(listener, "the extension subscribes at load");
+	assert.doesNotThrow(() => listener?.(), "a change before the widget exists is a no-op");
+	await t.start();
+	let renders = 0;
+	t.widgets[0].factory({ requestRender: () => renders++ }, theme);
+	listener?.();
+	assert.equal(renders, 1);
+});

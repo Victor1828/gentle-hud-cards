@@ -19,6 +19,8 @@ export interface CardProvider {
 	key: string;
 	/** Optional: refresh cached state from a Pi event; runs before the render request. */
 	update?(event: CardUpdateEvent, ctx: CardUpdateContext): void;
+	/** Optional: called once at load; the provider calls `listener` when async state changes outside a Pi event. */
+	watch?(listener: () => void): void;
 	/** Current card, or undefined when it has nothing to show. */
 	card(): HudCard | undefined;
 }

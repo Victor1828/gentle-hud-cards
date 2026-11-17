@@ -45,6 +45,21 @@ When Pi does not know the usage yet (right after a compaction, before the next r
 - **Reserve tokens**: no Pi extension API exposes `compaction.reserveTokens`, so `lib/cards/reserve.ts` reads it at session start from the project `.pi/settings.json`, then the global agent dir (`PI_CODING_AGENT_DIR`, else `~/.gentle-shell/agent`, else `~/.pi/agent`), honoring `compaction.modelOverrides`, and defaults to 16384.
 - **Compactions** are counted from `compaction` entries on the session branch plus `session_compact` events, and reset on every `session_start`.
 
+## Engram
+
+The `ENGRAM` card shows whether the local Engram memory daemon is up, how many memories this project has, and how old its last handoff (the newest `session_summary`) is, e.g. `Online · v3.7.0`, `Memories: 42`, `Last handoff: 13h ago`.
+
+| State | Tone | Body |
+|---|---|---|
+| Checking (right after session start) | info | `Connecting to :7437` |
+| Online | info | `Memories: N` (or `Stats unavailable`), then `Last handoff: 13h ago`, `No handoff yet`, or `Last handoff: unknown` |
+| Unhealthy (`/health` not ok) | warning | `Health check failed` |
+| Offline (connection refused or timed out) | error | `Daemon unreachable :7437` |
+
+- **Endpoints**: only `GET` on `http://127.0.0.1:7437`, none of them auth-gated: `/health`, then in parallel `/stats?cwd=<session cwd>` and `/observations/recent?cwd=<session cwd>&scope=project&limit=50`. Passing `cwd` lets Engram resolve the project the same way its own tools do; an unknown project (404) counts as zero memories.
+- **Handoff**: Engram 3.7 ignores a `type` filter on `/observations/recent`, so the card scans the 50 newest project observations for `session_summary`. A handoff older than that window shows as `No handoff yet`. Timestamps are Engram's UTC SQLite format.
+- **Refresh**: on every `session_start`, then on `turn_end` once 30 seconds have passed since the last result (`ENGRAM_MIN_REFRESH_MS` in `lib/cards/engram-live.ts`), never two requests at once. Each request times out after 1.5 seconds. Results land between Pi events, so the provider's `watch()` asks the host to redraw.
+
 ## Install
 
 Add the package's absolute path to `packages` in the agent settings (`~/.gentle-shell/agent/settings.json`):
