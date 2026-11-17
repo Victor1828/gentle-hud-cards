@@ -6,7 +6,7 @@
 // and Pi's real theme. The installed gentle-pi is only read, never written.
 //
 // Exit: 0 every check passed, 1 a check failed, 2 gentle-pi or Pi not found.
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import { createToolsProvider } from "../lib/cards/tools-live.ts";
 import { loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { patchLayout, railPatchStatus, unpatchLayout } from "../lib/patch.ts";
+import { createVisibilityStore, VISIBILITY_FILE } from "../lib/visibility.ts";
 
 const COLUMNS = 140; // gentle-pi's SIDEBAR_BREAKPOINT: the rail owns the host from here.
 const ROWS = 60;
@@ -85,7 +86,7 @@ function host() {
 }
 
 /** Load the extension against one gentle-pi copy and start a session in a fake host. */
-async function session(copyRoot: string) {
+async function session(copyRoot: string, agentDir: string) {
 	const cards = providers();
 	const nativeCalls = { count: 0 };
 	const deps: HudCardsDeps = {
@@ -100,9 +101,12 @@ async function session(copyRoot: string) {
 		},
 		loadSidebarPart: (r) => loadNativeSidebarPart(r, jitiImport),
 		loadSidebarHover: (r) => loadNativeSidebarHover(r, jitiImport),
+		// A temp agent dir: the e2e never reads or writes the real ~/.gentle-shell/agent.
+		visibility: createVisibilityStore(join(agentDir, VISIBILITY_FILE)),
 	};
 	const handlers = new Map<string, Handler[]>();
-	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
+	const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]), registerCommand: (name: string, options: never) => commands.set(name, options) } as never);
 	const tui = host();
 	const notices: string[] = [];
 	let widget: Component | undefined;
@@ -115,15 +119,19 @@ async function session(copyRoot: string) {
 		ui: {
 			notify: (message: string) => notices.push(message),
 			setWidget: (_key: string, factory: (tui: unknown, theme: unknown) => Component) => (widget = factory(tui, theme)),
+			select: async (_title: string, options: string[]) => options[script.shift() ?? -1],
 		},
 	};
+	const script: number[] = [];
+	/** Run the real /hud handler with a scripted selector: row indexes, then escape. */
+	const hud = (...rows: number[]) => (script.push(...rows), commands.get("hud")!.handler("", ctx));
 	const fire = async (type: string, event: object = {}) => {
 		for (const handler of handlers.get(type) ?? []) await handler(event, ctx);
 	};
 	await fire("session_start", { reason: "startup" });
 	await fire("tool_execution_end", { toolCallId: "t3", toolName: "bash", isError: false });
 	await new Promise((resolve) => setTimeout(resolve, 0)); // Engram's async snapshot lands.
-	return { tui, cards, notices, widget: () => widget, nativeCalls, titles: cards.map((card) => card.card()?.title ?? "?") };
+	return { tui, cards, notices, hud, widget: () => widget, nativeCalls, titles: cards.map((card) => card.card()?.title ?? "?") };
 }
 
 async function railFrame(copyRoot: string, tui: ReturnType<typeof host>): Promise<() => string[]> {
@@ -155,7 +163,8 @@ try {
 	check("patch: the installed gentle-pi is patched (npm run rail:patch)", railPatchStatus(root).status === "patched", railPatchStatus(root).status);
 
 	// S2: the patched rail draws the four cards, in order, before Status.
-	const rail = await session(patchedRoot);
+	const railAgent = join(temp, "agent-rail");
+	const rail = await session(patchedRoot, railAgent);
 	const frame = await railFrame(patchedRoot, rail.tui);
 	const dark = frame();
 	const lines = plain(dark);
@@ -206,13 +215,32 @@ try {
 	check("theme: the switch keeps the same text", plain(hudRows(dark)).join("\n") === plain(hudRows(light)).join("\n"));
 	pi.initTheme("dark");
 
+	// S12: /hud hides and shows cards in the real rail frame; the file on disk follows.
+	const railFile = join(railAgent, VISIBILITY_FILE);
+	const mcpIndex = rail.titles.indexOf("MCP");
+	check("hud: the file does not exist before the first change", !existsSync(railFile));
+	await rail.hud(mcpIndex);
+	const hiddenRows = railRows();
+	check("hud: hiding MCP removes it from the real rail frame, the others stay", indexOf(hiddenRows, "MCP") < 0 && ["CONTEXT+", "ENGRAM", "TOOLS"].every((title) => indexOf(hiddenRows, `▾ ${title}`) >= 0), hiddenRows.join(" / "));
+	check("hud: the file on disk lists hud-mcp", existsSync(railFile) && JSON.stringify(JSON.parse(readFileSync(railFile, "utf8"))) === JSON.stringify({ version: 1, hidden: ["hud-mcp"] }), existsSync(railFile) ? readFileSync(railFile, "utf8") : "missing");
+	await rail.hud(mcpIndex);
+	const shownRows = railRows();
+	check("hud: showing MCP again restores it in its rail position", indexOf(shownRows, "▾ MCP") > indexOf(shownRows, "▾ ENGRAM") && indexOf(shownRows, "▾ MCP") < indexOf(shownRows, "▾ TOOLS"), shownRows.join(" / "));
+	check("hud: the file on disk lists nothing hidden again", JSON.stringify(JSON.parse(readFileSync(railFile, "utf8"))) === JSON.stringify({ version: 1, hidden: [] }), readFileSync(railFile, "utf8"));
+
 	// S4: an unpatched layout never draws hud-* parts; the cards fall back below the editor.
-	const fallback = await session(unpatchedRoot);
+	const fallbackAgent = join(temp, "agent-fallback");
+	const fallback = await session(unpatchedRoot, fallbackAgent);
 	const unpatchedLines = plain((await railFrame(unpatchedRoot, fallback.tui))());
 	check("fallback: the unpatched rail draws no HUD card", fallback.titles.every((title) => indexOf(unpatchedLines, `▾ ${title}`) < 0));
 	check("fallback: one notice says the rail is not patched", fallback.notices.length === 1 && /not patched/.test(fallback.notices[0]), fallback.notices.join(" | "));
 	const below = plain(fallback.widget()?.render(60) ?? []);
 	check("fallback: the four cards stack below the editor", fallback.titles.every((title) => indexOf(below, title) >= 0), below.slice(0, 6).join(" / "));
+	await fallback.hud(fallback.titles.indexOf("MCP"));
+	const belowHidden = plain(fallback.widget()?.render(60) ?? []);
+	check("hud: hiding MCP removes it from the below-editor stack, the others stay", indexOf(belowHidden, "MCP") < 0 && ["CONTEXT+", "ENGRAM", "TOOLS"].every((title) => indexOf(belowHidden, title) >= 0), belowHidden.join(" / "));
+	await fallback.hud(fallback.titles.indexOf("MCP"));
+	check("hud: showing MCP again restores it in the below-editor stack", indexOf(plain(fallback.widget()?.render(60) ?? []), "MCP") >= 0);
 	check("fallback: they render through gentle-pi's renderCard", fallback.nativeCalls.count >= fallback.cards.length, `native calls: ${fallback.nativeCalls.count}`);
 } finally {
 	rmSync(temp, { recursive: true, force: true });

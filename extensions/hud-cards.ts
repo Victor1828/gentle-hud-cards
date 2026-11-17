@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import type { NativeRenderCard } from "../lib/card.ts";
 import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
@@ -8,6 +9,7 @@ import { createToolsProvider } from "../lib/cards/tools-live.ts";
 import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { railPatchStatus, type PatchReport } from "../lib/patch.ts";
+import { createMemoryVisibilityStore, createVisibilityStore, visibilityFile, type VisibilityStore } from "../lib/visibility.ts";
 import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarHoverFn, type SidebarPartFn } from "../lib/rail.ts";
 
 export const WIDGET_KEY = "gentle-hud-cards";
@@ -23,17 +25,35 @@ export interface HudCardsDeps {
 	loadSidebarPart(root: string | undefined): Promise<SidebarPartFn | undefined>;
 	/** Optional: gentle-pi's setSidebarHover, so hover clears when the pointer leaves a card header. */
 	loadSidebarHover?(root: string | undefined): Promise<SidebarHoverFn | undefined>;
+	/** Where `/hud` keeps the hidden cards; omitted means in memory only (never touches disk). */
+	visibility?: VisibilityStore;
 }
+
+const CARD_LABELS: Record<string, string> = { "hud-context": "CONTEXT+", "hud-engram": "ENGRAM", "hud-mcp": "MCP", "hud-tools": "TOOLS" };
+const labelOf = (id: string) => CARD_LABELS[id] ?? id.slice(HUD_KEY_PREFIX.length).toUpperCase();
 
 export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 	return (pi) => {
 		// Only hud-* keys can be drawn by the patched rail and never shadow a native section.
-		const cards = deps.providers.filter((provider) => provider.key.startsWith(HUD_KEY_PREFIX));
+		const providers = deps.providers.filter((provider) => provider.key.startsWith(HUD_KEY_PREFIX));
+		// Hidden cards report no card (the rail part and the fallback both skip them) but
+		// providers keep getting update()/watch(), so state is current when shown again.
+		const store = deps.visibility ?? createMemoryVisibilityStore();
+		let hidden = new Set<string>();
+		let visibilityError: string | undefined;
+		const loadVisibility = () => {
+			const read = store.read();
+			hidden = new Set(read.hidden);
+			visibilityError = read.error;
+		};
+		loadVisibility();
+		const cards: CardProvider[] = providers.map((provider) => ({ key: provider.key, card: () => (hidden.has(provider.key) ? undefined : provider.card()) }));
 		let native: NativeRenderCard | undefined;
 		let sidebarPart: SidebarPartFn | undefined;
 		let sidebarHover: SidebarHoverFn | undefined;
 		let requestRender: (() => void) | undefined;
 		let notified = false;
+		let visibilityWarned = false;
 		const root = deps.locateRoot();
 		// Read once at load, when gentle-shell loaded the same layout file: patching
 		// mid-session takes effect only after /reload, which reloads this too.
@@ -47,7 +67,7 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 		// Providers see every event first (registered before the host handlers, so
 		// state is fresh when the render request fires); one throwing never blocks the rest.
 		const feed = (type: string) => (event: unknown, ctx: unknown) => {
-			for (const provider of cards) {
+			for (const provider of providers) {
 				try {
 					provider.update?.({ ...(event as object), type }, ctx as never);
 				} catch {
@@ -58,7 +78,7 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 		// tool_execution_end fires for every finished call, blocked ones included.
 		for (const type of ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end"]) pi.on(type as "turn_end", feed(type));
 		// Async providers (Engram's HTTP fetch) land between Pi events; redraw when they do.
-		for (const provider of cards) {
+		for (const provider of providers) {
 			try {
 				provider.watch?.(() => requestRender?.());
 			} catch {
@@ -69,6 +89,11 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 		pi.on("session_start", async (_event, ctx) => {
 			await loaded;
 			if (!ctx.hasUI || cards.length === 0) return;
+			loadVisibility();
+			if (visibilityError && !visibilityWarned) {
+				visibilityWarned = true;
+				ctx.ui.notify(visibilityError, "warning");
+			}
 			const rail = patch.status === "patched" && sidebarPart ? sidebarPart : undefined;
 			const notice = rail ? undefined : patch.status === "patched" ? sidebarLoadNotice(patch.version) : railNotice(patch);
 			if (notice && !notified) {
@@ -89,6 +114,33 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 			);
 		});
 
+		// /hud: a selector of the cards in rail order; a row toggles, saves, redraws, and reopens it.
+		pi.registerCommand("hud", {
+			description: "Show or hide the HUD cards (CONTEXT+, ENGRAM, MCP, TOOLS)",
+			handler: async (_args, ctx) => {
+				if (!ctx.hasUI) return;
+				for (;;) {
+					const rows = cards.map((card) => `${hidden.has(card.key) ? "○" : "●"} ${labelOf(card.key)}  ${hidden.has(card.key) ? "hidden" : "shown"}`);
+					const choice = await ctx.ui.select("HUD cards: pick a card to show or hide (Esc to close)", rows);
+					const picked = choice === undefined ? -1 : rows.indexOf(choice);
+					if (picked < 0) return;
+					const id = cards[picked].key;
+					const next = new Set(hidden);
+					if (!next.delete(id)) next.add(id);
+					try {
+						store.write([...next]);
+					} catch (error) {
+						const code = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+						ctx.ui.notify(`gentle-hud-cards: could not save the card visibility (${code}); nothing changed.`, "error");
+						continue;
+					}
+					hidden = next;
+					visibilityError = undefined;
+					requestRender?.();
+				}
+			},
+		});
+
 		const refresh = () => requestRender?.();
 		pi.on("turn_end", refresh);
 		pi.on("message_end", refresh);
@@ -106,4 +158,5 @@ export default createHudCards({
 	loadRenderCard: loadNativeRenderCard,
 	loadSidebarPart: loadNativeSidebarPart,
 	loadSidebarHover: loadNativeSidebarHover,
+	visibility: createVisibilityStore(visibilityFile(process.env, homedir())),
 });

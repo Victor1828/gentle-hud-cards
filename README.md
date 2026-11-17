@@ -89,6 +89,26 @@ The `TOOLS` card counts this session's tool calls by category, e.g. `TOOLS  20 c
 - **Model-issued only**: calls made inside another tool (codemode's inner calls, with `parentToolCallId`) are not counted; `codemode` itself counts once as Other. This keeps the live count equal to a rebuild from the session.
 - **Rebuild**: on `session_start` (startup, reload, resume, fork) the counts are rebuilt from the assistant `toolCall` blocks in the session branch, and `turn_end` merges the branch again to catch any missed event.
 
+## Show or hide cards
+
+Run `/hud` to pick which cards show. It opens a selector with the four cards in rail order:
+
+```
+● CONTEXT+  shown
+● ENGRAM  shown
+○ MCP  hidden
+● TOOLS  shown
+```
+
+Choose a row to toggle it. The choice is saved and applied right away, and the selector reopens with the new state. Press Esc to close it. A hidden card disappears from both the rail and the below-editor fallback; showing it brings it back on the next render. Hidden cards keep tracking their data, and collapsing a card (click its header) is independent of hiding it.
+
+- **File**: `<agent dir>/gentle-hud-cards.json`, where the agent dir is `PI_CODING_AGENT_DIR`, else `~/.pi/agent` (Gentle Shell uses `~/.gentle-shell/agent`). It is separate from `/gentle:customize`'s `visual-customization.json`, which rejects unknown keys.
+- **Schema**: `{"version": 1, "hidden": ["hud-mcp"]}`. Card keys are `hud-context`, `hud-engram`, `hud-mcp`, `hud-tools`; unknown keys are ignored. A missing file means every card is shown.
+- **Invalid file**: not valid JSON, another version, or no `hidden` list of strings. Every card is shown and a warning says so once per session. The file is left untouched until you change a card with `/hud`, which replaces it.
+- **Save failure**: reported as an error; nothing changes and the selector reopens.
+- **No UI**: `/hud` does nothing.
+- Writes are atomic (temp file plus rename) and create the directory if needed.
+
 ## Install
 
 Add the package's absolute path to `packages` in the agent settings (`~/.gentle-shell/agent/settings.json`):
@@ -131,6 +151,7 @@ It runs the real extension against the installed gentle-pi, without a TTY.
 | `patch: ...` | The original layout is recovered and still patches cleanly, and the install itself is patched. |
 | `rail: ...` | The patched rail draws CONTEXT+, ENGRAM, MCP, and TOOLS in order above Status, with live data and no notice. The below-editor copy is blank while the rail owns the host. |
 | `theme: ...` | Switching Pi's theme from dark to light recolors the cards on the next frame and keeps the same text. |
+| `hud: ...` | `/hud` (the real handler, scripted selector, temp agent dir) hides MCP from the real rail frame and from the below-editor stack, writes the expected file, and showing it again restores both. |
 | `fallback: ...` | An unpatched rail draws no HUD card, one notice explains why, and the four cards stack below the editor through gentle-pi's `renderCard`. |
 
 The e2e uses fixed card data, so it never depends on the Engram daemon or your MCP config. It does not drive a live Gentle Shell window; check that by eye after `/reload`.

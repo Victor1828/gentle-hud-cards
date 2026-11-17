@@ -37,7 +37,7 @@ function setup(extraProviders: CardProvider[] = [], reserve = 16_384) {
 		patchStatus: () => unpatched,
 		loadRenderCard: async () => undefined,
 		loadSidebarPart: async () => undefined,
-	})({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
+	})({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]), registerCommand() {} } as never);
 	const emit = async (event: string) => {
 		for (const handler of handlers.get(event) ?? []) await handler({ type: event }, ctx);
 	};

@@ -26,7 +26,7 @@ function setup(overrides: Partial<HudCardsDeps>) {
 		...overrides,
 	};
 	const handlers = new Map<string, Handler[]>();
-	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
+	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]), registerCommand() {} } as never);
 	const notices: Array<[string, unknown]> = [];
 	const widgets: Array<{ key: string; factory: Factory; options: unknown }> = [];
 	const ctx = (hasUI = true) => ({
@@ -154,7 +154,7 @@ test("T7: providers receive tool_execution_end with its payload, and the earlier
 		loadRenderCard: async () => undefined,
 		loadSidebarPart: async () => undefined,
 	};
-	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
+	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]), registerCommand() {} } as never);
 	const fire = (type: string, event: object) => {
 		for (const handler of handlers.get(type) ?? []) handler(event, { hasUI: false });
 	};
