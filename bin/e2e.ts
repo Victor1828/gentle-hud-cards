@@ -17,7 +17,7 @@ import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createMcpProvider } from "../lib/cards/mcp-live.ts";
 import { createToolsProvider } from "../lib/cards/tools-live.ts";
-import { loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
+import { loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { patchLayout, railPatchStatus, unpatchLayout } from "../lib/patch.ts";
 
@@ -52,6 +52,9 @@ const pi = VIRTUAL_MODULES["@earendil-works/pi-coding-agent"];
 const nativeTheme = await hostImport("modes/interactive/theme/theme.js");
 const piTui = createRequire(join(piRoot, "package.json"));
 const { renderLayoutFrame } = await import(pathToFileURL(piTui.resolve("@earendil-works/pi-tui/dist/layout.js")).href);
+// Headless chalk emits no SGR at all; force it so bold is observable (the same chalk instance Pi's theme uses).
+const chalk = (await import(pathToFileURL(piTui.resolve("chalk")).href)).default as { level: number };
+chalk.level = 3;
 const loader = createJiti(import.meta.url, { moduleCache: false, fsCache: false, virtualModules: VIRTUAL_MODULES, tryNative: false });
 const jitiImport = (path: string) => loader.import(path) as Promise<Record<string, unknown>>;
 
@@ -96,6 +99,7 @@ async function session(copyRoot: string) {
 			return counted;
 		},
 		loadSidebarPart: (r) => loadNativeSidebarPart(r, jitiImport),
+		loadSidebarHover: (r) => loadNativeSidebarHover(r, jitiImport),
 	};
 	const handlers = new Map<string, Handler[]>();
 	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
@@ -161,6 +165,38 @@ try {
 	check("rail: live data reaches the rail (TOOLS counts the live bash call)", lines.some((line) => line.includes("Bash: 1")) && lines.some((line) => line.includes("Memory: 1")));
 	check("rail: no update notice when the rail is patched", rail.notices.length === 0, rail.notices.join(" | "));
 	check("rail: the below-editor copy is blank while the rail owns the host", (rail.widget()?.render(80) ?? ["missing"]).length === 0);
+
+	// S11: native title style. TOOLS is bold + the theme's `text` color; CONTEXT+ is bold + its tone color.
+	const sgr = (role: string) => theme.fg(role, "X").split("X")[0];
+	const boldOpen = theme.bold("X").split("X")[0];
+	const rowOf = (all: string[], title: string) => all[indexOf(plain(all), `▾ ${title}`)] ?? "";
+	const toolsRow = rowOf(dark, "TOOLS");
+	check("S11: the theme's bold emits an SGR here (the bold checks are not vacuous)", boldOpen.includes("\x1b["), JSON.stringify(boldOpen));
+	check("S11: the TOOLS title is bold and painted with the theme `text` color", toolsRow.includes(boldOpen + "TOOLS") && toolsRow.includes(sgr("text")), JSON.stringify(toolsRow));
+	check("S11: the TOOLS glyph is muted, not the tone color", toolsRow.includes(sgr("muted") + "▾"), JSON.stringify(toolsRow));
+	const contextRow = rowOf(dark, "CONTEXT+");
+	const contextTone = rail.cards[0].card()?.tone === "warning" ? "warning" : rail.cards[0].card()?.tone === "error" ? "error" : "accent";
+	check(`S11: the CONTEXT+ title is bold and keeps its tone color (${contextTone})`, contextRow.includes(boldOpen + "CONTEXT+") && contextRow.includes(sgr(contextTone)) && !contextRow.includes(sgr("text") + boldOpen), JSON.stringify(contextRow));
+
+	// S10: a click through the REAL layout's mouse dispatch: the rail ScrollView's handleMouse, which hit-tests
+	// the header row and hands the part a part-relative y (gentle-pi tests/shell-sidebar-layout.test.ts does the same).
+	type RailScroll = { render(width: number): string[]; handleMouse(event: unknown): { handled: boolean } | undefined };
+	const railEntry = (rail.tui.layoutRoot as unknown as Record<symbol, () => { entries: { component: RailScroll; basis: number }[] }>)[NODE]().entries[1];
+	const railRows = () => (frame(), plain(railEntry.component.render(railEntry.basis)));
+	const clickRow = (title: string, button = "left") => {
+		const y = indexOf(railRows(), `${title}`);
+		return railEntry.component.handleMouse({ type: "click", button, x: 4, y, screenX: COLUMNS - railEntry.basis + 4, screenY: y, width: railEntry.basis, height: ROWS, shift: false, alt: false, ctrl: false });
+	};
+	const toolsBody = (rows: string[]) => rows.some((row) => row.includes("Bash: 1"));
+	check("click: TOOLS starts open with its body", toolsBody(railRows()) && indexOf(railRows(), "▾ TOOLS") >= 0);
+	check("click: a right click on the header does nothing", clickRow("▾ TOOLS", "right") === undefined && toolsBody(railRows()));
+	const first = clickRow("▾ TOOLS");
+	const collapsed = railRows();
+	check("click: the real layout dispatches a left click on the TOOLS header and it is handled", first?.handled === true, JSON.stringify(first));
+	check("click: TOOLS collapses to its ▸ header, the other cards stay open", indexOf(collapsed, "▸ TOOLS") >= 0 && !toolsBody(collapsed) && indexOf(collapsed, "▾ CONTEXT+") >= 0 && indexOf(collapsed, "▾ MCP") >= 0, collapsed.join(" / "));
+	const second = clickRow("▸ TOOLS");
+	const reopened = railRows();
+	check("click: a second click expands TOOLS again", second?.handled === true && indexOf(reopened, "▾ TOOLS") >= 0 && toolsBody(reopened), reopened.join(" / "));
 
 	// S3: a theme switch recolors the cards on the next frame, same text.
 	pi.initTheme("light");

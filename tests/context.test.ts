@@ -93,6 +93,7 @@ test("S3/S9: Fresh card is info with exact English rows", () => {
 		title: "CONTEXT+",
 		subtitle: "Fresh",
 		tone: "info",
+		keepToneColor: true,
 		body: ["20% · 40k / 200k", "Compact in 144k · ~7 turns", "Compactions: 0", "→ Keep going"],
 	});
 });
@@ -120,6 +121,7 @@ test("S9: unknown tokens render an unknown card", () => {
 		title: "CONTEXT+",
 		subtitle: "Unknown",
 		tone: "info",
+		keepToneColor: true,
 		body: ["Usage unknown", "Compactions: 1"],
 	});
 });

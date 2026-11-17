@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
+import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 
 const theme = { fg: (_role: string, text: string) => text };
 
@@ -58,4 +58,14 @@ test("the cards component reads the renderer at render time so a late native loa
 	assert.equal(component.render(20)[0].startsWith("╭─ ✿ A"), true, "fallback before the native renderer loads");
 	native = (c) => [`[${c.title}]`];
 	assert.deepEqual(component.render(20), ["[A]"]);
+});
+
+test("loadNativeSidebarHover imports lib/shell-sidebar.ts setSidebarHover and degrades to undefined on any failure", async () => {
+	const fn = () => {};
+	const seen: string[] = [];
+	assert.equal(await loadNativeSidebarHover("/gp", async (path) => (seen.push(path), { setSidebarHover: fn })), fn);
+	assert.deepEqual(seen, ["/gp/lib/shell-sidebar.ts"]);
+	assert.equal(await loadNativeSidebarHover(undefined, async () => ({ setSidebarHover: fn })), undefined);
+	assert.equal(await loadNativeSidebarHover("/gp", async () => { throw new Error("gone"); }), undefined);
+	assert.equal(await loadNativeSidebarHover("/gp", async () => ({})), undefined);
 });

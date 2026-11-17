@@ -5,10 +5,10 @@ import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createMcpProvider } from "../lib/cards/mcp-live.ts";
 import { createToolsProvider } from "../lib/cards/tools-live.ts";
-import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
+import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { railPatchStatus, type PatchReport } from "../lib/patch.ts";
-import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarPartFn } from "../lib/rail.ts";
+import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarHoverFn, type SidebarPartFn } from "../lib/rail.ts";
 
 export const WIDGET_KEY = "gentle-hud-cards";
 
@@ -21,6 +21,8 @@ export interface HudCardsDeps {
 	patchStatus(root: string | undefined): PatchReport;
 	loadRenderCard(root: string | undefined): Promise<NativeRenderCard | undefined>;
 	loadSidebarPart(root: string | undefined): Promise<SidebarPartFn | undefined>;
+	/** Optional: gentle-pi's setSidebarHover, so hover clears when the pointer leaves a card header. */
+	loadSidebarHover?(root: string | undefined): Promise<SidebarHoverFn | undefined>;
 }
 
 export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
@@ -29,15 +31,17 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 		const cards = deps.providers.filter((provider) => provider.key.startsWith(HUD_KEY_PREFIX));
 		let native: NativeRenderCard | undefined;
 		let sidebarPart: SidebarPartFn | undefined;
+		let sidebarHover: SidebarHoverFn | undefined;
 		let requestRender: (() => void) | undefined;
 		let notified = false;
 		const root = deps.locateRoot();
 		// Read once at load, when gentle-shell loaded the same layout file: patching
 		// mid-session takes effect only after /reload, which reloads this too.
 		const patch = deps.patchStatus(root);
-		const loaded = Promise.all([deps.loadRenderCard(root), deps.loadSidebarPart(root)]).then(([renderCard, part]) => {
+		const loaded = Promise.all([deps.loadRenderCard(root), deps.loadSidebarPart(root), deps.loadSidebarHover?.(root)]).then(([renderCard, part, hover]) => {
 			native = renderCard;
 			sidebarPart = part;
+			sidebarHover = hover;
 		});
 
 		// Providers see every event first (registered before the host handlers, so
@@ -79,7 +83,7 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 					// Rail: hud-* parts that the patched layout draws; the bottom widget
 					// stays mounted for narrow screens. Unpatched: a plain widget, never
 					// sidebarPart, which would blank it whenever the rail owns the host.
-					return rail ? mountRail(tui, cards, theme, bottom, rail) : bottom;
+					return rail ? mountRail(tui, cards, theme, bottom, rail, sidebarHover) : bottom;
 				},
 				{ placement: "belowEditor" },
 			);
@@ -101,4 +105,5 @@ export default createHudCards({
 	patchStatus: railPatchStatus,
 	loadRenderCard: loadNativeRenderCard,
 	loadSidebarPart: loadNativeSidebarPart,
+	loadSidebarHover: loadNativeSidebarHover,
 });

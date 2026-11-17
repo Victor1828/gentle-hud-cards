@@ -11,6 +11,8 @@ Extra Gentle Shell cards for Pi: **Contexto+**, **Engram**, **MCP**, and **Tools
 - **Placement.** With the rail patch applied, every card is its own `hud-*` section in the Gentle Shell sidebar rail. In narrow or non-fullscreen layouts the cards stack below the editor. Without the patch they always render below the editor, and the session shows a one-time notice explaining why.
 
   The notice names the cause: the rail is not patched; gentle-pi changed its layout (the patch anchor no longer matches); gentle-pi was not found; this gentle-pi version has no `lib/shell-sidebar-layout.ts`; the layout could not be read (with the error code); or the patch is applied but gentle-pi's sidebar module could not be loaded. Every case falls back to below the editor.
+- **Rail header.** In the rail, each card's header matches the native sections: a muted `▾` glyph, a bold white (`text` role) uppercase title, and a muted subtitle. CONTEXT+ keeps its level color (accent, warning or error) for glyph and title, and is bold too. Hovering the header paints it with the `warning` role, like the native headers.
+- **Collapse.** Click a card's header in the rail to collapse it to a single `▸` row; click again to expand. Like the native Todo, Jobs and Status sections, this is not persisted: after `/reload` every card is open. The below-editor fallback does not collapse.
 - **Card keys.** Only providers whose key starts with `hud-` are shown; the patched rail draws nothing else, and the prefix keeps cards from shadowing native sections.
 
 ## Rail patch

@@ -110,5 +110,5 @@ export function contextCard(a: ContextAssessment): HudCard {
 	body.push(`Compactions: ${a.compactions}`);
 	const line = recommendationLine(a);
 	if (line) body.push(line);
-	return { key: "hud-context", title: "CONTEXT+", subtitle: LEVEL_LABEL[a.level], body, tone: LEVEL_TONE[a.level] };
+	return { key: "hud-context", title: "CONTEXT+", subtitle: LEVEL_LABEL[a.level], body, tone: LEVEL_TONE[a.level], keepToneColor: true };
 }

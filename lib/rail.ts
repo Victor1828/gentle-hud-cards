@@ -28,9 +28,29 @@ interface Component {
 	dispose?(): void;
 }
 
-export type SidebarPartFn = (tui: unknown, key: string, bottom: Component, rail: Component & { digest?(): string }) => Component;
+/** The slice of gentle-pi's TUI mouse event the header click and hover need (pi-tui TuiMouseEvent). */
+export interface RailMouseEvent {
+	type: string;
+	button: string;
+	y: number;
+}
+export interface RailMouseResult {
+	handled: boolean;
+	render?: boolean;
+}
 
-export function createRailPart(provider: CardProvider, theme: CardTheme) {
+export type SidebarPartFn = (tui: unknown, key: string, bottom: Component, rail: Component & { digest?(): string; handleMouse?(event: RailMouseEvent): RailMouseResult | undefined }) => Component;
+/** gentle-pi `setSidebarHover(tui, owner, clear)`. */
+export type SidebarHoverFn = (tui: unknown, owner?: object, clear?: () => void) => void;
+
+export interface RailPartHooks {
+	requestRender?(): void;
+	setHover?(owner: object, clear: () => void): void;
+}
+
+const HOVER_ROLE = "warning"; // gentle-pi shell-hover HOVER_ROLE
+
+export function createRailPart(provider: CardProvider, theme: CardTheme, hooks: RailPartHooks = {}) {
 	const current = (): HudCard | undefined => {
 		try {
 			return provider.card();
@@ -38,22 +58,52 @@ export function createRailPart(provider: CardProvider, theme: CardTheme) {
 			return undefined;
 		}
 	};
-	return {
+	// Like the native cards, collapse and hover live in memory only: /reload opens every card.
+	let collapsed = false;
+	let hovered = false;
+	const part = {
 		render(width: number): string[] {
 			const card = current();
 			if (!card) return [];
-			const role = titleRole(card.tone);
-			const text = headerText(card.title, card.subtitle, width);
-			const count = text.subtitle ? HEADER_GAP + theme.fg("dim", text.subtitle.slice(HEADER_GAP.length)) : "";
-			const header = `${theme.fg(role, "▾")} ${theme.fg(role, text.title)}${count}`;
+			// gentle-pi renderPanelHeader: muted glyph, bold `text` title, muted subtitle; hover swaps to the warning role.
+			const titleColor = hovered ? HOVER_ROLE : card.keepToneColor ? titleRole(card.tone) : "text";
+			const glyphColor = hovered ? HOVER_ROLE : card.keepToneColor ? titleRole(card.tone) : "muted";
+			const text = headerText(card.title.toUpperCase(), card.subtitle, width);
+			const name = theme.bold ? theme.bold(text.title) : text.title;
+			const count = text.subtitle ? HEADER_GAP + theme.fg("muted", text.subtitle.slice(HEADER_GAP.length)) : "";
+			const header = `${theme.fg(glyphColor, collapsed ? "▸" : "▾")} ${theme.fg(titleColor, name)}${count}`;
+			if (collapsed) return [header];
 			return [header, ...card.body.map((row) => ROW_INDENT + truncate(row, Math.max(1, width - ROW_INDENT.length)))];
 		},
 		/** The rail re-renders a part only when this changes. */
 		digest(): string {
-			return JSON.stringify(current() ?? null);
+			return JSON.stringify([current() ?? null, collapsed, hovered]);
 		},
-		invalidate(): void {},
+		/** The layout passes part-relative rows: y 0 is the header (gentle-pi lib/shell-sidebar-layout.ts dispatchPartMouse). */
+		handleMouse(event: RailMouseEvent): RailMouseResult | undefined {
+			const onHeader = event.y === 0;
+			if (event.type === "move" && event.button === "none") {
+				if (onHeader) hooks.setHover?.(part, clearHover);
+				if (onHeader === hovered) return onHeader ? { handled: true } : undefined;
+				hovered = onHeader;
+				hooks.requestRender?.();
+				return { handled: true, render: true };
+			}
+			if (event.type !== "click" || event.button !== "left" || !onHeader) return undefined;
+			collapsed = !collapsed;
+			hooks.requestRender?.();
+			return { handled: true, render: true };
+		},
+		invalidate(): void {
+			hovered = false;
+		},
 	};
+	const clearHover = () => {
+		if (!hovered) return;
+		hovered = false;
+		hooks.requestRender?.();
+	};
+	return part;
 }
 
 /**
@@ -61,11 +111,15 @@ export function createRailPart(provider: CardProvider, theme: CardTheme) {
  * bottom widget (shown when the rail does not own the screen); the others
  * paint nothing below the editor.
  */
-export function mountRail(tui: unknown, providers: CardProvider[], theme: CardTheme, bottom: Component, sidebarPart: SidebarPartFn): Required<Component> {
+export function mountRail(tui: unknown, providers: CardProvider[], theme: CardTheme, bottom: Component, sidebarPart: SidebarPartFn, setSidebarHover?: SidebarHoverFn): Required<Component> {
+	const hooks: RailPartHooks = {
+		requestRender: () => (tui as { requestRender?(): void } | undefined)?.requestRender?.(),
+		setHover: setSidebarHover ? (owner, clear) => setSidebarHover(tui, owner, clear) : undefined,
+	};
 	const empty: Component = { render: () => [], invalidate() {} };
 	// A key outside the hud- namespace would never be drawn, or would shadow a native section.
 	const accepted = providers.filter((provider) => provider.key.startsWith(HUD_KEY_PREFIX));
-	const parts = accepted.map((provider, index) => sidebarPart(tui, provider.key, index === 0 ? bottom : empty, createRailPart(provider, theme)));
+	const parts = accepted.map((provider, index) => sidebarPart(tui, provider.key, index === 0 ? bottom : empty, createRailPart(provider, theme, hooks)));
 	return {
 		render: (width: number) => (parts[0] ?? bottom).render(width),
 		invalidate(): void {},

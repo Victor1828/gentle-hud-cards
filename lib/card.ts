@@ -12,10 +12,13 @@ export interface HudCard {
 	subtitle?: string;
 	body: string[];
 	tone: CardTone;
+	/** Rail header keeps its tone color (bold) instead of the native white title; only CONTEXT+ sets it. */
+	keepToneColor?: boolean;
 }
 
 export interface CardTheme {
 	fg(role: string, text: string): string;
+	bold?(text: string): string;
 	bg?(role: string, text: string): string;
 }
 

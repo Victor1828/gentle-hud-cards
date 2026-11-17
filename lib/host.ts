@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { renderHudCard, type CardTheme, type HudCard, type NativeRenderCard } from "./card.ts";
-import type { SidebarPartFn } from "./rail.ts";
+import type { SidebarHoverFn, SidebarPartFn } from "./rail.ts";
 
 /** The Pi event a provider is told about; `type` is the Pi event name. */
 export interface CardUpdateEvent {
@@ -49,6 +49,17 @@ export async function loadNativeSidebarPart(root: string | undefined, importer: 
 	try {
 		const mod = await importer(join(root, "lib", "shell-sidebar.ts"));
 		return typeof mod.sidebarPart === "function" ? (mod.sidebarPart as SidebarPartFn) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** gentle-pi's `setSidebarHover` (lib/shell-sidebar.ts): lets the layout clear a part's hover when the pointer leaves it. */
+export async function loadNativeSidebarHover(root: string | undefined, importer: Importer = (path) => import(path)): Promise<SidebarHoverFn | undefined> {
+	if (!root) return undefined;
+	try {
+		const mod = await importer(join(root, "lib", "shell-sidebar.ts"));
+		return typeof mod.setSidebarHover === "function" ? (mod.setSidebarHover as SidebarHoverFn) : undefined;
 	} catch {
 		return undefined;
 	}
