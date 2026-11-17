@@ -4,6 +4,7 @@ import type { NativeRenderCard } from "../lib/card.ts";
 import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createMcpProvider } from "../lib/cards/mcp-live.ts";
+import { createToolsProvider } from "../lib/cards/tools-live.ts";
 import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { railPatchStatus, type PatchReport } from "../lib/patch.ts";
@@ -11,8 +12,8 @@ import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarP
 
 export const WIDGET_KEY = "gentle-hud-cards";
 
-// Cards register here as they land (T7 Tools).
-const providers: CardProvider[] = [createContextProvider(), createEngramProvider(), createMcpProvider()];
+// Rail order: CONTEXT+, ENGRAM, MCP, TOOLS.
+export const defaultProviders: CardProvider[] = [createContextProvider(), createEngramProvider(), createMcpProvider(), createToolsProvider()];
 
 export interface HudCardsDeps {
 	providers: CardProvider[];
@@ -50,7 +51,8 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 				}
 			}
 		};
-		for (const type of ["session_start", "turn_end", "message_end", "session_compact"]) pi.on(type as "turn_end", feed(type));
+		// tool_execution_end fires for every finished call, blocked ones included.
+		for (const type of ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end"]) pi.on(type as "turn_end", feed(type));
 		// Async providers (Engram's HTTP fetch) land between Pi events; redraw when they do.
 		for (const provider of cards) {
 			try {
@@ -94,7 +96,7 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 }
 
 export default createHudCards({
-	providers,
+	providers: defaultProviders,
 	locateRoot: () => locateGentlePi({ env: process.env, execPath: process.execPath, exists: existsSync }),
 	patchStatus: railPatchStatus,
 	loadRenderCard: loadNativeRenderCard,

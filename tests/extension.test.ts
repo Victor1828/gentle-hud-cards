@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createHudCards, type HudCardsDeps } from "../extensions/hud-cards.ts";
+import { createHudCards, defaultProviders, type HudCardsDeps } from "../extensions/hud-cards.ts";
 import type { CardProvider } from "../lib/host.ts";
 import { LAYOUT_FILE, railPatchStatus, type PatchReport } from "../lib/patch.ts";
 
@@ -141,4 +141,29 @@ test("T5: a provider's watch() change requests a render once the widget is mount
 	t.widgets[0].factory({ requestRender: () => renders++ }, theme);
 	listener?.();
 	assert.equal(renders, 1);
+});
+
+test("T7: providers receive tool_execution_end with its payload, and the earlier events are still forwarded", async () => {
+	const seen: Array<Record<string, unknown>> = [];
+	const recorder: CardProvider = { ...provider("hud-rec"), update: (event) => void seen.push(event as never) };
+	const handlers = new Map<string, Handler[]>();
+	const deps: HudCardsDeps = {
+		providers: [recorder],
+		locateRoot: () => "/gp",
+		patchStatus: () => report("unpatched"),
+		loadRenderCard: async () => undefined,
+		loadSidebarPart: async () => undefined,
+	};
+	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]) } as never);
+	const fire = (type: string, event: object) => {
+		for (const handler of handlers.get(type) ?? []) handler(event, { hasUI: false });
+	};
+	for (const type of ["session_start", "turn_end", "message_end", "session_compact"]) fire(type, {});
+	fire("tool_execution_end", { toolCallId: "t1", toolName: "read", isError: false, parentToolCallId: "p" });
+	assert.deepEqual(seen.map((event) => event.type), ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end"]);
+	assert.deepEqual(seen[4], { type: "tool_execution_end", toolCallId: "t1", toolName: "read", isError: false, parentToolCallId: "p" });
+});
+
+test("T7: the default provider list registers the Tools card after MCP", () => {
+	assert.deepEqual(defaultProviders.map((entry) => entry.key), ["hud-context", "hud-engram", "hud-mcp", "hud-tools"]);
 });

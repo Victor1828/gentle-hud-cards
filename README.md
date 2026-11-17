@@ -2,7 +2,7 @@
 
 Extra Gentle Shell cards for Pi: **Contexto+**, **Engram**, **MCP**, and **Tools**. The logic is ported and adapted from [hudr2](https://github.com/Totopo27/hudr2) (MIT).
 
-> Status: renderer, fallback host, rail patch, and the **Contexto+** card are ready. Engram, MCP, and Tools land in later tasks.
+> Status: renderer, fallback host, rail patch, and all four cards (**Contexto+**, **Engram**, **MCP**, **Tools**) are ready. End-to-end docs and checks land in a later task.
 
 ## How it renders
 
@@ -70,6 +70,22 @@ The `MCP` card lists the MCP servers Pi loads for the session, e.g. `MCP  7/8 on
 - **Warnings**: a file that cannot be read or parsed adds a `⚠ global|project mcp.json unreadable|invalid` row and turns the card to warning. An untrusted project that has a `.pi/mcp.json` adds `Project mcp.json untrusted`.
 - **Secrets**: only names, transport and `enabled` are kept. `env`, `headers`, `args` and URLs never leave the reader.
 - **Limits**: this is configuration, not live state. Pi keeps connection state (connected, failed, needs-auth) private to its MCP extension, and no extension API exposes it. Servers registered by other extensions (`pi.registerMcpServer`) are not listed. The files are read on `session_start`, so edits show after `/reload`, matching Pi.
+
+## Tools
+
+The `TOOLS` card counts this session's tool calls by category, e.g. `TOOLS  20 calls`, then `Reads: 12`, `Writes: 3`, `Bash: 1`, `Memory: 0`, `Other: 4`. With no calls yet it shows `No tool calls yet`.
+
+| Category | Tool names |
+| --- | --- |
+| Reads | `read`, `grep`, `find`, `ls` |
+| Writes | `edit`, `write` |
+| Bash | `bash`, `bash_background`, `powershell` |
+| Memory | `mem_*`, `mcp__engram__*` |
+| Other | everything else (`codemode`, `subagent_*`, other MCP tools, ...) |
+
+- **Live count**: every finished call (`tool_execution_end`, blocked calls included) adds one, once per call id.
+- **Model-issued only**: calls made inside another tool (codemode's inner calls, with `parentToolCallId`) are not counted; `codemode` itself counts once as Other. This keeps the live count equal to a rebuild from the session.
+- **Rebuild**: on `session_start` (startup, reload, resume, fork) the counts are rebuilt from the assistant `toolCall` blocks in the session branch, and `turn_end` merges the branch again to catch any missed event.
 
 ## Install
 
