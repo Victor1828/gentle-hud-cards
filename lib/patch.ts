@@ -16,7 +16,12 @@ export const BACKUP_SUFFIX = ".gentle-hud-backup";
 const CONTEXT = "state.parts.get(key)";
 const CONTEXT_WINDOW = 400;
 
-export type PatchStatus = "patched" | "unpatched" | "unknown" | "missing";
+/**
+ * missing: no gentle-pi root; no-layout: a root without the layout file;
+ * unreadable: the layout exists but cannot be read (see `code`).
+ */
+export type PatchStatus = "patched" | "unpatched" | "unknown" | "missing" | "no-layout" | "unreadable";
+type Inspected = "patched" | "unpatched" | "unknown";
 
 const occurrences = (source: string, needle: string) => source.split(needle).length - 1;
 
@@ -29,7 +34,7 @@ function provenAt(source: string, needle: string): boolean {
 }
 
 /** Classify a layout source; anything not provably patched or unpatched is "unknown". */
-export function inspectLayout(source: string): Exclude<PatchStatus, "missing"> {
+export function inspectLayout(source: string): Inspected {
 	const anchors = occurrences(source, ANCHOR);
 	const patches = occurrences(source, PATCHED);
 	if (anchors === 1 && patches === 0 && provenAt(source, ANCHOR)) return "unpatched";
@@ -38,13 +43,13 @@ export function inspectLayout(source: string): Exclude<PatchStatus, "missing"> {
 }
 
 /** The patched source when `source` is provably unpatched, else no source. */
-export function patchSource(source: string): { status: Exclude<PatchStatus, "missing">; source?: string } {
+export function patchSource(source: string): { status: Inspected; source?: string } {
 	const status = inspectLayout(source);
 	return status === "unpatched" ? { status, source: source.replace(ANCHOR, PATCHED) } : { status };
 }
 
 /** The original source when `source` is provably patched, else no source. */
-export function unpatchSource(source: string): { status: Exclude<PatchStatus, "missing">; source?: string } {
+export function unpatchSource(source: string): { status: Inspected; source?: string } {
 	const status = inspectLayout(source);
 	return status === "patched" ? { status, source: source.replace(PATCHED, ANCHOR) } : { status };
 }
@@ -55,6 +60,8 @@ export interface PatchReport {
 	changed: boolean;
 	version: string | undefined;
 	file: string | undefined;
+	/** The filesystem error code when the layout is unreadable. */
+	code?: string;
 }
 
 function gentlePiVersion(root: string): string | undefined {
@@ -67,11 +74,18 @@ function gentlePiVersion(root: string): string | undefined {
 }
 
 function readLayout(root: string | undefined): { report: PatchReport; source?: string } {
-	if (!root) return { report: { status: "missing", changed: false, version: undefined, file: undefined } };
+	// A root that does not exist is no gentle-pi at all, not an unsupported version.
+	if (!root || !existsSync(root)) return { report: { status: "missing", changed: false, version: undefined, file: undefined } };
 	const file = join(root, LAYOUT_FILE);
 	const version = gentlePiVersion(root);
-	if (!existsSync(file)) return { report: { status: "missing", changed: false, version, file } };
-	const source = readFileSync(file, "utf8");
+	let source: string;
+	try {
+		source = readFileSync(file, "utf8");
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
+		const status = code === "ENOENT" || code === "ENOTDIR" ? "no-layout" : "unreadable";
+		return { report: status === "unreadable" ? { status, changed: false, version, file, code } : { status, changed: false, version, file } };
+	}
 	return { report: { status: inspectLayout(source), changed: false, version, file }, source };
 }
 

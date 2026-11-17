@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Apply, remove, or inspect the gentle-pi rail patch. Rerun `patch` after every
 // gentle-pi update: it refuses (exit 2, nothing written) when the layout changed.
-// Exit codes: 0 ok, 1 gentle-pi missing, 2 refused, 3 write failed, 64 usage.
+// Exit codes: 0 ok, 1 gentle-pi (or its layout file) missing, 2 refused, 3 read or write failed, 64 usage.
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { LAYOUT_FILE, patchLayout, railPatchStatus, unpatchLayout, type PatchReport } from "../lib/patch.ts";
@@ -29,6 +29,7 @@ let report: PatchReport;
 try {
 	report = operation === "patch" ? patchLayout(root) : operation === "unpatch" ? unpatchLayout(root) : railPatchStatus(root);
 } catch (error) {
+	// Reads never throw (they report "unreadable"), so this is a patch/unpatch write.
 	// Every layout write is a rename, so a failure leaves the layout as it was.
 	const code = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
 	fail(3, `failed: ${code} writing in ${root ? dirname(join(root, LAYOUT_FILE)) : "gentle-pi"}; ${LAYOUT_FILE} was left unchanged.`);
@@ -36,6 +37,8 @@ try {
 const gentlePi = `gentle-pi ${report.version ?? "(unknown version)"}`;
 
 if (report.status === "missing") fail(1, `gentle-pi not found${root ? ` at ${root}` : ""} (set GENTLE_HUD_GENTLE_PI_ROOT or pass --root).`);
+if (report.status === "no-layout") fail(1, `${gentlePi} at ${root} has no ${LAYOUT_FILE}; this version is not supported.`);
+if (report.status === "unreadable") fail(3, `failed: ${report.code} reading ${report.file}; nothing was written.`);
 if (report.status === "unknown") fail(2, `refused: ${gentlePi} changed ${LAYOUT_FILE}; the rail patch anchor was not found exactly once. Nothing was written.`);
 
 const out = (line: string) => process.stdout.write(`${line}\n`);

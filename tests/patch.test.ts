@@ -115,13 +115,47 @@ test("an unknown layout is refused and left byte-identical, with no backup", () 
 	}
 });
 
-test("a gentle-pi without the layout file reports missing and writes nothing", () => {
+test("R3-004: no root is missing; a root without the layout file is no-layout with its version; nothing is written", () => {
 	const gp = fakeGentlePi(null);
 	try {
-		assert.equal(railPatchStatus(gp.root).status, "missing");
-		assert.equal(patchLayout(gp.root).status, "missing");
+		const expected = { status: "no-layout", changed: false, version: "4.8.0", file: gp.file };
+		assert.deepEqual(railPatchStatus(gp.root), expected);
+		assert.deepEqual(patchLayout(gp.root), expected);
+		assert.deepEqual(unpatchLayout(gp.root), expected);
 		assert.equal(existsSync(gp.file), false);
-		assert.equal(railPatchStatus(undefined).status, "missing");
+		assert.equal(existsSync(gp.file + BACKUP_SUFFIX), false);
+		assert.deepEqual(railPatchStatus(undefined), { status: "missing", changed: false, version: undefined, file: undefined });
+	} finally {
+		gp.cleanup();
+	}
+});
+
+test("R3-002: a directory at the layout path is unreadable (EISDIR), never thrown, and nothing is written", () => {
+	const gp = fakeGentlePi(null);
+	try {
+		mkdirSync(gp.file);
+		const expected = { status: "unreadable", changed: false, version: "4.8.0", file: gp.file, code: "EISDIR" };
+		assert.deepEqual(railPatchStatus(gp.root), expected);
+		assert.deepEqual(patchLayout(gp.root), expected);
+		assert.deepEqual(unpatchLayout(gp.root), expected);
+		assert.equal(existsSync(gp.file + BACKUP_SUFFIX), false);
+	} finally {
+		gp.cleanup();
+	}
+});
+
+test("R3-002: a chmod 000 layout is unreadable (EACCES) and stays untouched", (t) => {
+	if (process.getuid?.() === 0) return t.skip("root ignores file permissions");
+	const gp = fakeGentlePi();
+	try {
+		chmodSync(gp.file, 0o000);
+		const expected = { status: "unreadable", changed: false, version: "4.8.0", file: gp.file, code: "EACCES" };
+		assert.deepEqual(railPatchStatus(gp.root), expected);
+		assert.deepEqual(patchLayout(gp.root), expected);
+		assert.deepEqual(unpatchLayout(gp.root), expected);
+		assert.equal(existsSync(gp.file + BACKUP_SUFFIX), false);
+		chmodSync(gp.file, 0o644);
+		assert.equal(readFileSync(gp.file, "utf8"), UNPATCHED);
 	} finally {
 		gp.cleanup();
 	}
