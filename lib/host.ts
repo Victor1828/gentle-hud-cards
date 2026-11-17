@@ -13,6 +13,7 @@ export interface CardUpdateContext {
 	model?: { provider?: string; id?: string };
 	sessionManager?: { getBranch(): unknown[] };
 	getContextUsage?(): { tokens: number | null; contextWindow: number } | undefined;
+	isProjectTrusted?(): boolean;
 }
 
 export interface CardProvider {

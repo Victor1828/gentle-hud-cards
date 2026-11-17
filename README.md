@@ -60,6 +60,17 @@ The `ENGRAM` card shows whether the local Engram memory daemon is up, how many m
 - **Handoff**: Engram 3.7 ignores a `type` filter on `/observations/recent`, so the card scans the 50 newest project observations for `session_summary`. A handoff older than that window shows as `No handoff yet`. Timestamps are Engram's UTC SQLite format.
 - **Refresh**: on every `session_start`, then on `turn_end` once 30 seconds have passed since the last result (`ENGRAM_MIN_REFRESH_MS` in `lib/cards/engram-live.ts`), never two requests at once. Each request times out after 1.5 seconds. Results land between Pi events, so the provider's `watch()` asks the host to redraw.
 
+## MCP
+
+The `MCP` card lists the MCP servers Pi loads for the session, e.g. `MCP  7/8 on`, then one row per server: `● engram · stdio`, `○ grafana · off` (disabled), `✕ legacy · invalid` (Pi will not start it). After 8 rows it shows `+N more`.
+
+- **Sources**: the same files and merge rule as Pi's built-in MCP extension. First `<agentDir>/mcp.json`, where `agentDir` is `PI_CODING_AGENT_DIR` (Gentle Shell sets `~/.gentle-shell/agent`) or else `~/.pi/agent`. Then `<cwd>/.pi/mcp.json`, only when the project is trusted (`ctx.isProjectTrusted()`).
+- **Merge**: a project server with the same name replaces the global one. A project entry without `command`, `url` or `type` only overrides `enabled`.
+- **Transport**: `url` is `http`, `command` is `stdio`, and `type: "sse"` or neither field is `invalid`. `enabled` defaults to true.
+- **Warnings**: a file that cannot be read or parsed adds a `⚠ global|project mcp.json unreadable|invalid` row and turns the card to warning. An untrusted project that has a `.pi/mcp.json` adds `Project mcp.json untrusted`.
+- **Secrets**: only names, transport and `enabled` are kept. `env`, `headers`, `args` and URLs never leave the reader.
+- **Limits**: this is configuration, not live state. Pi keeps connection state (connected, failed, needs-auth) private to its MCP extension, and no extension API exposes it. Servers registered by other extensions (`pi.registerMcpServer`) are not listed. The files are read on `session_start`, so edits show after `/reload`, matching Pi.
+
 ## Install
 
 Add the package's absolute path to `packages` in the agent settings (`~/.gentle-shell/agent/settings.json`):
