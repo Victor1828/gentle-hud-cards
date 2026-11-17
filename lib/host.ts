@@ -2,8 +2,23 @@ import { join } from "node:path";
 import { renderHudCard, type CardTheme, type HudCard, type NativeRenderCard } from "./card.ts";
 import type { SidebarPartFn } from "./rail.ts";
 
+/** The Pi event a provider is told about; `type` is the Pi event name. */
+export interface CardUpdateEvent {
+	type: string;
+}
+
+/** The slice of Pi's ExtensionContext that providers may read when updating. */
+export interface CardUpdateContext {
+	cwd?: string;
+	model?: { provider?: string; id?: string };
+	sessionManager?: { getBranch(): unknown[] };
+	getContextUsage?(): { tokens: number | null; contextWindow: number } | undefined;
+}
+
 export interface CardProvider {
 	key: string;
+	/** Optional: refresh cached state from a Pi event; runs before the render request. */
+	update?(event: CardUpdateEvent, ctx: CardUpdateContext): void;
 	/** Current card, or undefined when it has nothing to show. */
 	card(): HudCard | undefined;
 }

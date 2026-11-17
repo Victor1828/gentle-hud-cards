@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import type { NativeRenderCard } from "../lib/card.ts";
+import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createCardsComponent, loadNativeRenderCard, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
 import { railPatchStatus, type PatchReport } from "../lib/patch.ts";
@@ -8,8 +9,8 @@ import { HUD_KEY_PREFIX, mountRail, railNotice, sidebarLoadNotice, type SidebarP
 
 export const WIDGET_KEY = "gentle-hud-cards";
 
-// Cards register here as they land (T4 Contexto+, T5 Engram, T6 MCP, T7 Tools).
-const providers: CardProvider[] = [];
+// Cards register here as they land (T5 Engram, T6 MCP, T7 Tools).
+const providers: CardProvider[] = [createContextProvider()];
 
 export interface HudCardsDeps {
 	providers: CardProvider[];
@@ -35,6 +36,19 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 			native = renderCard;
 			sidebarPart = part;
 		});
+
+		// Providers see every event first (registered before the host handlers, so
+		// state is fresh when the render request fires); one throwing never blocks the rest.
+		const feed = (type: string) => (event: unknown, ctx: unknown) => {
+			for (const provider of cards) {
+				try {
+					provider.update?.({ ...(event as object), type }, ctx as never);
+				} catch {
+					// A broken provider update must not break the other cards.
+				}
+			}
+		};
+		for (const type of ["session_start", "turn_end", "message_end", "session_compact"]) pi.on(type as "turn_end", feed(type));
 
 		pi.on("session_start", async (_event, ctx) => {
 			await loaded;

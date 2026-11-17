@@ -2,7 +2,7 @@
 
 Extra Gentle Shell cards for Pi: **Contexto+**, **Engram**, **MCP**, and **Tools**. The logic is ported and adapted from [hudr2](https://github.com/Totopo27/hudr2) (MIT).
 
-> Status: renderer, fallback host, and rail patch are ready. The cards land one by one in later tasks, so this version loads but draws nothing yet.
+> Status: renderer, fallback host, rail patch, and the **Contexto+** card are ready. Engram, MCP, and Tools land in later tasks.
 
 ## How it renders
 
@@ -26,6 +26,24 @@ npm run rail:unpatch   # restore the original bytes and remove the matching back
 Then run `/reload` in Gentle Shell.
 
 **After every gentle-pi update** the patch is gone, because the update replaces the installed files. Run `npm run rail:patch` again. The patch is applied only when the original line appears exactly once and is followed by the code that reads the sidebar parts. Anything else is refused with exit 2 and nothing is written, and the cards keep working below the editor until this package supports the new layout. The injected code is wrapped in `try`/`catch`, so a future rename inside that function hides the HUD sections instead of breaking the rail.
+
+## Contexto+
+
+The `CONTEXT+` card shows how full the context window is and what to do about it, e.g. `62% · 124k / 200k`, `Compact in 59.6k · ~3 turns`, `Compactions: 0`, and a recommendation line. Pi auto-compacts when usage passes `contextWindow - reserveTokens`; the turns estimate is the room left divided by the average growth of the last 5 turns (hidden until two turns have been seen).
+
+| Level | When | Recommendation |
+|---|---|---|
+| Fresh (info) | below 40% of the window **and** below 120k tokens | `→ Keep going` |
+| Mature (warning) | 40% or more, **or** 120k tokens or more | `→ /compact at next break` |
+| Saturated (error) | 70% or more, **or** 200k tokens or more, **or** 2 or fewer turns left before auto-compact | `→ /compact now` |
+
+If the session has already been compacted once or more, Mature and Saturated recommend `→ Start a new session` instead, because summaries of summaries lose detail. Fresh never recommends a new session. The absolute caps matter on huge windows: 40% of 1M tokens is far past the point where long contexts degrade.
+
+When Pi does not know the usage yet (right after a compaction, before the next response) the card says `Usage unknown`.
+
+- **Thresholds** are named constants at the top of `lib/cards/context.ts` (`MATURE_PERCENT`, `SATURATED_PERCENT`, `MATURE_TOKENS`, `SATURATED_TOKENS`, `SATURATED_TURNS_LEFT`, `COMPACTIONS_FOR_NEW_SESSION`).
+- **Reserve tokens**: no Pi extension API exposes `compaction.reserveTokens`, so `lib/cards/reserve.ts` reads it at session start from the project `.pi/settings.json`, then the global agent dir (`PI_CODING_AGENT_DIR`, else `~/.gentle-shell/agent`, else `~/.pi/agent`), honoring `compaction.modelOverrides`, and defaults to 16384.
+- **Compactions** are counted from `compaction` entries on the session branch plus `session_compact` events, and reset on every `session_start`.
 
 ## Install
 
