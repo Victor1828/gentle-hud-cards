@@ -158,3 +158,12 @@ test("S8: events that reach update still work when hasUI is false (state is kept
 	await t.emit("session_start");
 	assert.equal(t.provider.card()?.body[0], "50% · 100k / 200k");
 });
+
+test("T11b: session_shutdown changes nothing and never reads the stale context", () => {
+	const provider = createContextProvider({ readReserve: () => 16_384 });
+	const ctx = { getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000 }), sessionManager: { getBranch: () => [] } };
+	provider.update?.({ type: "session_start" }, ctx);
+	const before = JSON.stringify(provider.card());
+	provider.update?.({ type: "session_shutdown" }, { getContextUsage: () => { throw new Error("stale ctx"); }, sessionManager: { getBranch: () => { throw new Error("stale ctx"); } } });
+	assert.equal(JSON.stringify(provider.card()), before);
+});

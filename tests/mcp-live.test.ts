@@ -225,3 +225,43 @@ test("Risk 2 advisory: a huge failing tool result is capped on the live path too
 	assert.ok(Date.now() - started < 200);
 	assert.equal(t.provider.card()?.body[0], "● a · failed");
 });
+
+// ---- T11b: the in-flight check dies with the session ----
+
+test("R4-001: session_shutdown aborts an in-flight check; a finished run is not aborted; late results are dropped", async () => {
+	const d = deferred();
+	const signals: AbortSignal[] = [];
+	const t = setup(() => config("a"), (input) => (signals.push(input.signal!), d.promise));
+	t.provider.update?.({ type: "session_start" }, ctx);
+	t.provider.update?.({ type: "session_shutdown" }, ctx);
+	assert.equal(signals[0].aborted, true);
+	d.resolve([status("a", "failed", "LATE")]);
+	await tick();
+	assert.ok(!JSON.stringify(t.provider.card()).includes("LATE"));
+
+	const done = setup(() => config("a"), (input) => (signals.push(input.signal!), Promise.resolve([status("a", "connected")])));
+	done.provider.update?.({ type: "session_start" }, ctx);
+	await tick();
+	done.provider.update?.({ type: "session_shutdown" }, ctx);
+	assert.equal(signals[1].aborted, false, "nothing to kill after the run finished");
+});
+
+test("R4-001: a hard exit aborts the in-flight check, and the exit listener never outlives the run (no leak across /reload)", async () => {
+	const base = process.listenerCount("exit");
+	const d = deferred();
+	const signals: AbortSignal[] = [];
+	const t = setup(() => config("a"), (input) => (signals.push(input.signal!), d.promise));
+	t.provider.update?.({ type: "session_start" }, ctx);
+	t.provider.update?.({ type: "session_start" }, ctx);
+	assert.equal(process.listenerCount("exit"), base + 1, "one listener per provider, however many runs");
+	process.emit("exit", 0);
+	assert.equal(signals.every((signal) => signal.aborted), true);
+	d.resolve([]);
+	await tick();
+	assert.equal(process.listenerCount("exit"), base, "removed when the run completes");
+
+	const again = setup(() => config("a"), () => new Promise(() => {}));
+	again.provider.update?.({ type: "session_start" }, ctx);
+	again.provider.update?.({ type: "session_shutdown" }, ctx);
+	assert.equal(process.listenerCount("exit"), base, "removed on shutdown");
+});

@@ -160,7 +160,9 @@ test("T7: providers receive tool_execution_end with its payload, and the earlier
 	};
 	for (const type of ["session_start", "turn_end", "message_end", "session_compact"]) fire(type, {});
 	fire("tool_execution_end", { toolCallId: "t1", toolName: "read", isError: false, parentToolCallId: "p" });
-	assert.deepEqual(seen.map((event) => event.type), ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end"]);
+	// T11b: session_shutdown is forwarded too (an intended contract change) so the MCP check can be killed.
+	fire("session_shutdown", {});
+	assert.deepEqual(seen.map((event) => event.type), ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end", "session_shutdown"]);
 	assert.deepEqual(seen[4], { type: "tool_execution_end", toolCallId: "t1", toolName: "read", isError: false, parentToolCallId: "p" });
 });
 

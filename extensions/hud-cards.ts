@@ -76,7 +76,7 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 			}
 		};
 		// tool_execution_end fires for every finished call, blocked ones included.
-		for (const type of ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end"]) pi.on(type as "turn_end", feed(type));
+		for (const type of ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end", "session_shutdown"]) pi.on(type as "turn_end", feed(type));
 		// Async providers (Engram's HTTP fetch) land between Pi events; redraw when they do.
 		for (const provider of providers) {
 			try {

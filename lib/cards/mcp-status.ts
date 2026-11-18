@@ -32,7 +32,7 @@ const PLACEHOLDER = "***";
 // Control characters (C0, DEL, C1), after ANSI sequences were removed.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 const ANSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
-const SENSITIVE_KEY = /token|key|secret|passw|pwd|credential|signature|session|(?<![a-z])auth(?:orization|entication)?(?![a-z])/i;
+const SENSITIVE_KEY = /token|key|secret|passw|pwd|credential|signature|session|(?<![a-z])(?:pg|mysql|db|redis)?(?:pass|pw|pwd)(?![a-z])|(?<![a-z])auth(?:orization|entication)?(?![a-z])/i;
 
 /** Only the first meaningful line is ever shown, so redaction never needs more than this; it also bounds the regex work. */
 export const MAX_ERROR_INPUT = 4096;
@@ -40,7 +40,10 @@ export const MAX_ERROR_INPUT = 4096;
 /** ANSI sequences and control characters removed (server names and error text). */
 export const stripControl = (text: string) => text.replace(ANSI_SEQUENCE, "").replace(CONTROL, "");
 
-const SECRET_WORD = "(?:--?[\\w-]*(?:pass|token|secret|key|auth)[\\w-]*|passw(?:or)?d|token|api[-_ ]?key|secret|密码|口令|密钥|令牌)";
+// Words that follow a secret word in ordinary prose ("password reset sent"); they are not values.
+const PROSE = "(?:reset|expired|required|incorrect|invalid|missing|rejected|mismatch|failed|error|not|has|must|too|for|and|or|sent|changed?|authentication|through)";
+
+const SECRET_WORD = "(?:--?[\\w-]*(?:pass|token|secret|key|auth)[\\w-]*|passw(?:or)?d|pwd|pw|pass|token|api[-_ ]?key|secret|密码|口令|密钥|令牌)";
 
 /** Remove every credential-shaped substring from `text`. Order matters: wide patterns first. */
 export function redact(text: string): string {
@@ -57,7 +60,7 @@ export function redact(text: string): string {
 			.replace(/\b(?:sk|pk|rk|ghp|gho|ghu|ghs|ghr|github_pat|xox[abprs]|glpat|AKIA|ASIA|AIza)[-_A-Za-z0-9]{8,}/g, PLACEHOLDER)
 			// A secret word followed by its value after a space, `=` or `:` (`--password x`, `token x`, `api key provided: x`).
 			// Over-redacts the word after "token"/"secret"/"password" in prose; that is the safe side.
-			.replace(new RegExp(`(?<![A-Za-z])(${SECRET_WORD})((?:\\s*[:=]\\s*|\\s+)(?:(?:provided|is|was|value|given)\\s*[:=]?\\s*)*)("[^"]*"|'[^']*'|[^\\s,;&"'}\\]]+)`, "gi"), `$1$2${PLACEHOLDER}`)
+			.replace(new RegExp(`(?<![A-Za-z])(${SECRET_WORD})((?:\\s*[:=]\\s*|\\s+)(?:(?:provided|is|was|value|given)\\s*[:=]?\\s*)*)(?!${PROSE}\\b)("[^"]*"|'[^']*'|[^\\s,;&"'}\\]]+)`, "gi"), `$1$2${PLACEHOLDER}`)
 			// Short password flags after well-known DB clients: `-p x` and `-px` (psql's `-p` is a port; over-redacted on purpose).
 			.replace(/(\b(?:psql|mysql|mysqldump|mariadb|mongosh?|redis-cli|pg_dump|pg_restore|sqlcmd)\b[^\n]*?\s)-p\s*[^\s-][^\s]*/gi, `$1-p ${PLACEHOLDER}`)
 			// Scheme-less userinfo `user:pass@host`.

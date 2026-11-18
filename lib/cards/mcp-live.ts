@@ -106,6 +106,24 @@ export function createMcpProvider(options: McpProviderOptions = {}): CardProvide
 	// Each session_start opens a new generation; results from older ones are dropped.
 	let generation = 0;
 	let running: AbortController | undefined;
+	// Best effort for a hard Pi exit: one listener per provider, present only while a run is in flight.
+	const onExit = () => running?.abort();
+	let exitHooked = false;
+	const hookExit = () => {
+		if (exitHooked) return;
+		exitHooked = true;
+		process.on("exit", onExit);
+	};
+	const unhookExit = () => {
+		if (!exitHooked) return;
+		exitHooked = false;
+		process.removeListener("exit", onExit);
+	};
+	const finishRun = (controller: AbortController) => {
+		if (running !== controller) return;
+		running = undefined;
+		unhookExit();
+	};
 
 	const notify = () => {
 		for (const listener of listeners) {
@@ -122,6 +140,7 @@ export function createMcpProvider(options: McpProviderOptions = {}): CardProvide
 		running?.abort();
 		const controller = new AbortController();
 		running = controller;
+		hookExit();
 		check = "checking";
 		status = new Map();
 		liveErrors = new Map();
@@ -133,12 +152,14 @@ export function createMcpProvider(options: McpProviderOptions = {}): CardProvide
 		}
 		pending.then(
 			(servers) => {
+				finishRun(controller);
 				if (mine !== generation) return;
 				status = new Map(servers.map((server) => [server.name, server]));
 				check = "done";
 				notify();
 			},
 			() => {
+				finishRun(controller);
 				if (mine !== generation) return;
 				check = "unavailable";
 				notify();
@@ -163,6 +184,16 @@ export function createMcpProvider(options: McpProviderOptions = {}): CardProvide
 		key: "hud-mcp",
 		update(event: CardUpdateEvent, ctx: CardUpdateContext): void {
 			if (event.type === "tool_execution_end") return onToolEnd(event as ToolEndEvent);
+			if (event.type === "session_shutdown") {
+				// Kill the in-flight status child (its process group) and drop its result.
+				generation++;
+				const controller = running;
+				if (controller) {
+					finishRun(controller);
+					controller.abort();
+				}
+				return;
+			}
 			if (event.type !== "session_start") return;
 			const input = { cwd: ctx.cwd, projectTrusted: trusted(ctx) };
 			try {
@@ -174,6 +205,7 @@ export function createMcpProvider(options: McpProviderOptions = {}): CardProvide
 			if (result.servers.length === 0) {
 				generation++;
 				running?.abort();
+				if (running) finishRun(running);
 				check = "done";
 				status = new Map();
 				liveErrors = new Map();

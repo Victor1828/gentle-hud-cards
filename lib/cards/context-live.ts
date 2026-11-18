@@ -52,7 +52,8 @@ export function createContextProvider(options: ContextProviderOptions = {}): Car
 					reserveTokens = DEFAULT_RESERVE_TOKENS;
 				}
 			}
-			if (!started) return;
+			// session_shutdown carries a stale context; nothing to recompute.
+			if (event.type === "session_shutdown" || !started) return;
 			const fromBranch = branchCompactions(ctx) ?? 0;
 			compactions = event.type === "session_compact" ? Math.max(fromBranch, compactions + 1) : Math.max(fromBranch, compactions);
 			const current = ctx.getContextUsage?.();

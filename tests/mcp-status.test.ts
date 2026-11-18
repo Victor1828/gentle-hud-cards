@@ -245,3 +245,19 @@ test("Risk 2 advisory: parseMcpList caps a huge error too", () => {
 	assert.ok(Date.now() - started < 200);
 	assert.ok(server.preview !== undefined);
 });
+
+// ---- T11b: bare `pass` / `pw` / `pwd` ----
+
+test("R1: bare pass, pw, pwd and env-style names are redacted at any width", () => {
+	for (const raw of ["pass=hunter2", "pass: hunter2", "pw=hunter2", "pwd hunter2", "--pass hunter2", `{"pass":"hunter2"}`, "DB_PASS=hunter2", "PGPASS=hunter2", "MYSQL_PWD=hunter2", "login failed pass hunter2"]) {
+		for (const columns of [400, PREVIEW_COLUMNS]) assert.ok(!errorPreview(raw, columns).includes("hunter2"), `${raw} @${columns}: ${errorPreview(raw, columns)}`);
+	}
+});
+
+test("R1: ordinary words that contain `pass` stay readable", () => {
+	for (const text of ["Unauthorized", "401 Unauthorized", "request passed", "password reset sent", "bypass enabled", "compass=north", "passport expired", "pass through proxy ok"]) {
+		const preview = errorPreview(text, 400);
+		assert.ok(!preview.includes("***") || text.startsWith("pass through"), `${text} -> ${preview}`);
+	}
+	assert.equal(errorPreview("password reset sent", 400), "password reset sent");
+});
