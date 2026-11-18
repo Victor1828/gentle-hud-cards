@@ -146,3 +146,103 @@ test("S3: fixed rows fit the ~28-column rail", () => {
 	];
 	for (const row of rows) assert.ok([...row].length <= 28, `${row} is ${[...row].length} columns`);
 });
+
+// ---- S13: live status merged into the card ----
+
+import type { McpServerStatus } from "../lib/cards/mcp-status.ts";
+import type { McpLiveView } from "../lib/cards/mcp.ts";
+
+const st = (name: string, state: string, preview?: string, transport: "http" | "stdio" = "http"): McpServerStatus => ({ name, state, transport, enabled: state !== "disabled", ...(preview ? { preview } : {}) });
+const view = (check: McpLiveView["check"], statuses: McpServerStatus[] = [], liveErrors: Record<string, string> = {}): McpLiveView => ({
+	check,
+	status: new Map(statuses.map((s) => [s.name, s])),
+	liveErrors: new Map(Object.entries(liveErrors)),
+});
+const base = (...servers: ReturnType<typeof server>[]): McpConfigResult => ({ servers, errors: [], projectIgnored: false });
+
+test("S13: the approved preview: online rows green, a failed one red with its error on the next row, N/M online", () => {
+	const config = base(server("clickup", "http"), server("engram", "stdio"), server("grafana", "http"), server("pganalyze", "http"), server("legacy", "http", false));
+	const card = mcpCard(config, view("done", [st("clickup", "connected"), st("engram", "connected", undefined, "stdio"), st("grafana", "connected"), st("pganalyze", "failed", "401 Unauthorized")]));
+	assert.equal(card.subtitle, "3/4 online");
+	assert.equal(card.tone, "warning");
+	assert.deepEqual(card.body, ["● pganalyze · failed", "  401 Unauthorized", "● clickup · http", "● engram · stdio", "● grafana · http", "○ legacy · off"]);
+	assert.deepEqual(card.glyphRoles, ["error", undefined, "success", "success", "success", undefined]);
+});
+
+test("S13: while the check runs, enabled servers show a neutral `● checking`; the subtitle says so; tone stays info", () => {
+	const card = mcpCard(base(server("a", "http"), server("b", "stdio", false)), view("checking"));
+	assert.deepEqual(card.body, ["● a · checking", "○ b · off"]);
+	assert.deepEqual(card.glyphRoles, ["muted", undefined]);
+	assert.equal(card.subtitle, "checking");
+	assert.equal(card.tone, "info");
+});
+
+test("S13: state labels: failed, needs auth, offline (disconnected/closed); unknown or missing after a check is `unchecked`", () => {
+	const config = base(server("f", "http"), server("n", "http"), server("d", "stdio"), server("c", "stdio"), server("m", "http"));
+	const card = mcpCard(config, view("done", [st("f", "failed"), st("n", "needs-auth", "sign in required"), st("d", "disconnected"), st("c", "closed")]));
+	assert.deepEqual(card.body, ["● f · failed", "● n · needs auth", "  sign in required", "● d · offline", "● c · offline", "● m · unchecked"]);
+	assert.deepEqual(card.glyphRoles, ["error", "error", undefined, "error", "error", "muted"]);
+	assert.equal(card.subtitle, "0/5 online");
+});
+
+test("S13: a live error turns a connected server red with its preview and wins over the CLI preview; it is not online", () => {
+	const card = mcpCard(base(server("a", "http")), view("done", [st("a", "connected")], { a: "429 rate limited" }));
+	assert.deepEqual(card.body, ["● a · failed", "  429 rate limited"]);
+	assert.equal(card.subtitle, "0/1 online");
+	const both = mcpCard(base(server("a", "http")), view("done", [st("a", "failed", "old cli error")], { a: "newer live error" }));
+	assert.deepEqual(both.body, ["● a · failed", "  newer live error"]);
+});
+
+test("S13: M counts enabled servers only (disabled and invalid are not in it)", () => {
+	const card = mcpCard(base(server("a", "http"), server("off", "http", false), server("bad", "invalid")), view("done", [st("a", "connected")]));
+	assert.equal(card.subtitle, "1/1 online");
+});
+
+test("S13: unavailable status keeps today's config rows and adds one `⚠ Status unavailable` row", () => {
+	const config = base(server("clickup", "http"), server("grafana", "http", false), server("legacy", "invalid"));
+	const today = mcpCard(config);
+	const card = mcpCard(config, view("unavailable"));
+	assert.deepEqual(card.body, [...today.body, "⚠ Status unavailable"]);
+	assert.equal(card.subtitle, today.subtitle);
+	assert.equal(card.tone, "info");
+	assert.ok(card.glyphRoles === undefined || card.glyphRoles.every((role) => role === undefined));
+});
+
+test("S13: unavailable status still shows live errors, red first", () => {
+	const card = mcpCard(base(server("a", "http"), server("b", "stdio")), view("unavailable", [], { b: "spawn ENOENT" }));
+	assert.deepEqual(card.body, ["● b · failed", "  spawn ENOENT", "● a · http", "⚠ Status unavailable"]);
+	assert.equal(card.tone, "warning");
+});
+
+test("S13: without a live view the card is exactly today's (preserved behavior)", () => {
+	const config = base(server("a", "http"), server("b", "stdio", false));
+	assert.deepEqual(mcpCard(config), mcpCard(config, undefined));
+	assert.equal(mcpCard(config).glyphRoles, undefined);
+	assert.equal(mcpCard(config).subtitle, "1/2 on");
+});
+
+test("S13: red servers are listed first and never hidden by the row cap; +N more counts only the rest", () => {
+	const names = Array.from({ length: MAX_SERVER_ROWS + 4 }, (_, i) => `s${i}`);
+	const config = base(...names.map((name) => server(name, "http")));
+	const last = names.at(-1)!;
+	const card = mcpCard(config, view("done", names.map((name) => st(name, name === last ? "failed" : "connected"))));
+	assert.equal(card.body[0], `● ${last} · failed`);
+	assert.equal(card.body.at(-1), `+4 more`);
+	assert.equal(card.body.filter((row) => row.startsWith("●")).length, MAX_SERVER_ROWS);
+	const allRed = mcpCard(config, view("done", names.map((name) => st(name, "failed"))));
+	assert.equal(allRed.body.filter((row) => row.startsWith("●")).length, names.length, "every red server shows");
+	assert.ok(!allRed.body.some((row) => row.includes("more")));
+});
+
+test("S13/S3: status rows fit the ~28-column rail", () => {
+	const card = mcpCard(base(server("pganalyze", "http"), server("a-long-name", "stdio")), view("done", [st("pganalyze", "needs-auth", "x".repeat(24)), st("a-long-name", "failed")]));
+	for (const row of card.body) assert.ok([...row].length <= 28, `${row} is ${[...row].length}`);
+});
+
+test("Risk 2 advisory: ANSI and control characters in configured server names never reach the card", () => {
+	const f = fs({ [`${AGENT}/mcp.json`]: json({ "ev\u001b[31mil\u0007\u009b": { command: "x" }, "plain\u001b]0;title\u0007": { url: "https://x" } }) });
+	const result = readMcpConfig({ agentDir: AGENT, projectTrusted: false, readFile: f.readFile, exists: f.exists });
+	assert.deepEqual(result.servers.map((s) => s.name), ["evil", "plain"]);
+	const text = mcpCard(result).body.join("\n");
+	assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text));
+});

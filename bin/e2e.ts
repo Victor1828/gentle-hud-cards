@@ -16,6 +16,7 @@ import type { NativeRenderCard } from "../lib/card.ts";
 import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createMcpProvider } from "../lib/cards/mcp-live.ts";
+import { parseMcpList } from "../lib/cards/mcp-status.ts";
 import { createToolsProvider } from "../lib/cards/tools-live.ts";
 import { loadNativeRenderCard, loadNativeSidebarHover, loadNativeSidebarPart, type CardProvider } from "../lib/host.ts";
 import { locateGentlePi } from "../lib/locate.ts";
@@ -66,12 +67,25 @@ const theme: Theme = {
 	bold: (text) => nativeTheme.theme.bold(text),
 };
 
+const MCP_SECRET = "hunter2pass-E2E";
+const FAKE_MCP_LIST = JSON.stringify({
+	servers: [
+		{ name: "engram", state: "connected", transport: "engram mcp", enabled: true, tools: ["mem_save"] },
+		{ name: "pganalyze", state: "failed", transport: "https://mcp.example/pg", enabled: true, tools: [], error: `401 Unauthorized\nAuthorization: Bearer ${MCP_SECRET}` },
+	],
+	errors: [],
+});
+
 function providers(): CardProvider[] {
 	const now = Date.now();
 	return [
 		createContextProvider({ readReserve: () => 16_384 }),
 		createEngramProvider({ fetchSnapshot: async () => ({ status: "online", version: "3.7.0", memories: 42, statsError: false, lastHandoff: now - 3_600_000 }), now: () => now }),
-		createMcpProvider({ read: () => ({ servers: [{ name: "engram", transport: "stdio", enabled: true, source: "global" }], errors: [], projectIgnored: false }) }),
+		// A fake status runner: the real parser sees `pi mcp list --json`-shaped text, so no Pi or server starts.
+		createMcpProvider({
+			read: () => ({ servers: [{ name: "engram", transport: "stdio", enabled: true, source: "global" }, { name: "pganalyze", transport: "http", enabled: true, source: "global" }], errors: [], projectIgnored: false }),
+			runStatus: async () => parseMcpList(FAKE_MCP_LIST) ?? [],
+		}),
 		createToolsProvider(),
 	];
 }
@@ -165,6 +179,7 @@ try {
 	// S2: the patched rail draws the four cards, in order, before Status.
 	const railAgent = join(temp, "agent-rail");
 	const rail = await session(patchedRoot, railAgent);
+	const sgr = (role: string) => theme.fg(role, "X").split("X")[0];
 	const frame = await railFrame(patchedRoot, rail.tui);
 	const dark = frame();
 	const lines = plain(dark);
@@ -172,11 +187,20 @@ try {
 	check(`rail: draws ${rail.titles.join(", ")}`, positions.every((at) => at >= 0), `titles ${JSON.stringify(rail.titles)} at ${JSON.stringify(positions)}`);
 	check("rail: cards keep their order and sit above the Status footer", positions.every((at, i) => i === 0 || at > positions[i - 1]) && positions[positions.length - 1] < indexOf(lines, "STATUS-FOOTER"), JSON.stringify({ positions, footer: indexOf(lines, "STATUS-FOOTER") }));
 	check("rail: live data reaches the rail (TOOLS counts the live bash call)", lines.some((line) => line.includes("Bash: 1")) && lines.some((line) => line.includes("Memory: 1")));
+	// S13: the MCP card's status circles use theme roles in the real rail frame: success for online, error for failed.
+	const mcpRows = dark.filter((line) => /engram · stdio|pganalyze · failed|401 Unauthorized/.test(line.replace(ANSI, "")));
+	const engramRow = mcpRows.find((line) => line.includes("engram · stdio")) ?? "";
+	const failedRow = mcpRows.find((line) => line.includes("pganalyze · failed")) ?? "";
+	const previewRow = mcpRows.find((line) => line.includes("401 Unauthorized")) ?? "";
+	check("S13: MCP subtitle counts the online servers: `1/2 online`", lines.some((line) => line.includes("▾ MCP") && line.includes("1/2 online")), lines.filter((line) => line.includes("MCP")).join(" / "));
+	check("S13: the connected server's circle is painted with the theme `success` role", engramRow.includes(sgr("success") + "●"), JSON.stringify(engramRow));
+	check("S13: the failed server's circle is painted with the theme `error` role", failedRow.includes(sgr("error") + "●"), JSON.stringify(failedRow));
+	check("S13: the failed server shows its redacted preview on the next row and no secret anywhere in the frame", plain(dark).some((line) => line.includes("401 Unauthorized")) && !plain(dark).join("\n").includes(MCP_SECRET) && previewRow !== "", JSON.stringify(previewRow));
+	check("S13: the failed server sorts above the online one, and the card turns warning", indexOf(plain(dark), "pganalyze · failed") < indexOf(plain(dark), "engram · stdio") && rail.cards[2].card()?.tone === "warning");
 	check("rail: no update notice when the rail is patched", rail.notices.length === 0, rail.notices.join(" | "));
 	check("rail: the below-editor copy is blank while the rail owns the host", (rail.widget()?.render(80) ?? ["missing"]).length === 0);
 
 	// S11: native title style. TOOLS is bold + the theme's `text` color; CONTEXT+ is bold + its tone color.
-	const sgr = (role: string) => theme.fg(role, "X").split("X")[0];
 	const boldOpen = theme.bold("X").split("X")[0];
 	const rowOf = (all: string[], title: string) => all[indexOf(plain(all), `▾ ${title}`)] ?? "";
 	const toolsRow = rowOf(dark, "TOOLS");
@@ -241,6 +265,10 @@ try {
 	check("hud: hiding MCP removes it from the below-editor stack, the others stay", indexOf(belowHidden, "MCP") < 0 && ["CONTEXT+", "ENGRAM", "TOOLS"].every((title) => indexOf(belowHidden, title) >= 0), belowHidden.join(" / "));
 	await fallback.hud(fallback.titles.indexOf("MCP"));
 	check("hud: showing MCP again restores it in the below-editor stack", indexOf(plain(fallback.widget()?.render(60) ?? []), "MCP") >= 0);
+	// S13: the native renderCard path keeps the painted glyph, and nothing secret reaches it.
+	const belowRaw = fallback.widget()?.render(60) ?? [];
+	check("S13: fallback: the failed circle keeps its `error` role through gentle-pi's renderCard", belowRaw.some((line) => line.includes("pganalyze · failed") && line.includes(sgr("error") + "●")), belowRaw.filter((line) => line.includes("pganalyze")).join(" / "));
+	check("S13: fallback: the preview is redacted", !plain(belowRaw).join("\n").includes(MCP_SECRET) && plain(belowRaw).some((line) => line.includes("401 Unauthorized")));
 	check("fallback: they render through gentle-pi's renderCard", fallback.nativeCalls.count >= fallback.cards.length, `native calls: ${fallback.nativeCalls.count}`);
 } finally {
 	rmSync(temp, { recursive: true, force: true });

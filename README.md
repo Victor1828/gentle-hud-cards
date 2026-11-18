@@ -64,14 +64,30 @@ The `ENGRAM` card shows whether the local Engram memory daemon is up, how many m
 
 ## MCP
 
-The `MCP` card lists the MCP servers Pi loads for the session, e.g. `MCP  7/8 on`, then one row per server: `● engram · stdio`, `○ grafana · off` (disabled), `✕ legacy · invalid` (Pi will not start it). After 8 rows it shows `+N more`.
+The `MCP` card shows which MCP servers are online. Example once the check has finished:
 
-- **Sources**: the same files and merge rule as Pi's built-in MCP extension. First `<agentDir>/mcp.json`, where `agentDir` is `PI_CODING_AGENT_DIR` (Gentle Shell sets `~/.gentle-shell/agent`) or else `~/.pi/agent`. Then `<cwd>/.pi/mcp.json`, only when the project is trusted (`ctx.isProjectTrusted()`).
-- **Merge**: a project server with the same name replaces the global one. A project entry without `command`, `url` or `type` only overrides `enabled`.
-- **Transport**: `url` is `http`, `command` is `stdio`, and `type: "sse"` or neither field is `invalid`. `enabled` defaults to true.
+```
+MCP  7/8 online
+● pganalyze · failed        (red circle)
+  401 Unauthorized
+● clickup · http            (green circle)
+● engram · stdio
+○ grafana · off
+```
+
+Rows: a green `●` for a connected server; a red `●` with `· failed`, `· needs auth` or `· offline` and, on the next row, a short error preview; `○ name · off` for a disabled server; `✕ name · invalid` for one Pi will not start. The subtitle is `N/M online`, where M counts the enabled servers. The card turns to the warning tone when any server is red. Red servers are listed first and are never hidden: after 8 servers the rest collapse into `+N more`, but all red servers always show.
+
+- **Sources (config)**: the same files and merge rule as Pi's built-in MCP extension. First `<agentDir>/mcp.json`, where `agentDir` is `PI_CODING_AGENT_DIR` (Gentle Shell sets `~/.gentle-shell/agent`) or else `~/.pi/agent`. Then `<cwd>/.pi/mcp.json`, only when the project is trusted (`ctx.isProjectTrusted()`). A project server with the same name replaces the global one; a project entry without `command`, `url` or `type` only overrides `enabled`. `url` is `http`, `command` is `stdio`, `type: "sse"` or neither field is `invalid`.
+- **Status source**: on every `session_start` one background run of Pi's own CLI, `node <pi-coding-agent>/dist/bundle/cli.js mcp list --json` (the `pi` bin of the pi-coding-agent that gentle-pi ships; `main.js` hands `mcp` to `dist/extensions/mcp/cli.js`). It is non-interactive (stdin closed), runs with the session's environment (so `PI_CODING_AGENT_DIR` matches) and never blocks the UI: while it runs the enabled servers show a dim `● name · checking`. It has a 20 second timeout (the whole process tree is killed), a 2 MB output cap, and one run per `session_start`; the result of an older session is dropped and its process aborted. Pi exits 1 when any server failed but still prints the JSON, so that is read as a result.
+- **Reconnect cost**: `mcp list` connects every enabled server (starting stdio servers and calling HTTP servers) and then closes them, so each session start, `/reload` included, reconnects your servers once (about 6 seconds for 8 servers here). It runs next to the session's own connections, not through them.
+- **Project trust**: the CLI decides project trust itself from Pi's trust store and cannot be told otherwise. For a project the card treats as untrusted it therefore runs from the agent dir instead of `<cwd>`, so `<cwd>/.pi/mcp.json` is never loaded or connected. A project the session trusts but the trust store does not simply shows its project-only servers as `· unchecked`.
+- **Live errors**: a failed `mcp__<server>__<tool>` call (`tool_execution_end` with `isError`) turns that server red with a preview of the result text; a later successful call for the same server clears it. Tool names map back to configured servers like Pi's naming (every character other than letters, digits and `_` becomes `_`; the collision hash only suffixes the tool part). A name that maps to no server or to several is ignored. Only calls that reach Pi as a tool call are seen: with the default `exposure: "codemode"` the model calls servers through `codemode` scripts, and those inner calls only count if Pi emits them as `mcp__...` tool events.
+- **Status unavailable**: if the CLI is missing, times out, crashes, or prints something that is not a servers list, the card keeps the config rows and adds one `⚠ Status unavailable` row; live errors still apply.
 - **Warnings**: a file that cannot be read or parsed adds a `⚠ global|project mcp.json unreadable|invalid` row and turns the card to warning. An untrusted project that has a `.pi/mcp.json` adds `Project mcp.json untrusted`.
-- **Secrets**: only names, transport and `enabled` are kept. `env`, `headers`, `args` and URLs never leave the reader.
-- **Limits**: this is configuration, not live state. Pi keeps connection state (connected, failed, needs-auth) private to its MCP extension, and no extension API exposes it. Servers registered by other extensions (`pi.registerMcpServer`) are not listed. The files are read on `session_start`, so edits show after `/reload`, matching Pi.
+- **Secrets**: only `name`, `state`, `transport` (reduced to `http` or `stdio`, since Pi reports the raw URL or command line), `enabled` and `error` are read from the CLI; everything else is dropped on parse. `env`, `headers`, `args` and URLs never leave the readers. The error becomes a one-line preview and the raw text is not kept, logged or notified.
+- **Preview and redaction** (`errorPreview` in `lib/cards/mcp-status.ts`): control codes and ANSI sequences are removed; then `Authorization` / `Proxy-Authorization` / `Cookie` lines, `Bearer` and `Basic` values, URL `user:pass@` userinfo and URL query strings or fragments, JWTs and well-known token prefixes (`sk-`, `ghp_`, `xox*`, ...), `key=value`, `"key": "value"` and `KEY: value` for names containing `token`, `key`, `secret`, `passw`, `pwd`, `credential`, `signature`, `session` or `auth`, and opaque runs of 20 or more base64, hex or id characters are replaced by `***`. Only then is the first meaningful line taken, its whitespace collapsed, a leading `Error:` removed, and the result cut to 24 cells with `…` (wide characters count double). A secret word (`password`, `token`, `api key`, `secret`, `--token`, `--auth`, `密码`, ...) followed by a space, `=` or `:` redacts the next word, so `invalid token xyz` shows `invalid token ***` (prose after those words is over-redacted on purpose); `-p x` and `-px` are redacted after `psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `pg_dump`, `pg_restore`, `sqlcmd` (so psql's port flag `-p 5432` is hidden too); scheme-less `user:pass@host` is redacted. Only the first 4 KB of an error is ever looked at, which bounds the work on the CLI and live-tool paths alike, and ANSI/control characters are also stripped from configured server names. Redaction is best effort: a secret in free text that matches none of these shapes would show.
+- **Colored circles**: a card row can name a theme role (`success`, `error`, `muted`) for its first character (`HudCard.glyphRoles`). The rail and the fallback cut the plain row to the width first and paint the glyph after, so escape codes are never cut or counted as columns. Colors come from the live theme, never fixed values.
+- **Limits**: servers registered by other extensions (`pi.registerMcpServer`) are not listed. The config files are read on `session_start`, so edits show after `/reload`, matching Pi. Status is a snapshot from session start plus failing calls; a server that drops later shows only once a call to it fails.
 
 ## Tools
 
@@ -154,7 +170,7 @@ It runs the real extension against the installed gentle-pi, without a TTY.
 | `hud: ...` | `/hud` (the real handler, scripted selector, temp agent dir) hides MCP from the real rail frame and from the below-editor stack, writes the expected file, and showing it again restores both. |
 | `fallback: ...` | An unpatched rail draws no HUD card, one notice explains why, and the four cards stack below the editor through gentle-pi's `renderCard`. |
 
-The e2e uses fixed card data, so it never depends on the Engram daemon or your MCP config. It does not drive a live Gentle Shell window; check that by eye after `/reload`.
+The e2e uses fixed card data and a fake MCP status runner (no Pi or server starts), so it never depends on the Engram daemon or your MCP config. Its `S13: ...` checks look at the MCP card in the real rail frame: online circle in the `success` role, failed circle in the `error` role, the redacted preview, and the same through gentle-pi's `renderCard` in the fallback. It does not drive a live Gentle Shell window; check that by eye after `/reload`.
 
 ## Uninstall
 
@@ -167,7 +183,7 @@ Then remove the package path from `packages` in `~/.gentle-shell/agent/settings.
 ## Known limits
 
 - **Future patch versions**: a layout that carries a newer `gentle-hud-cards:rail-patch` marker than this package knows is reported as `unknown` and refused. Restore it by hand from `lib/shell-sidebar-layout.ts.gentle-hud-backup`, or reinstall gentle-pi.
-- **MCP is configuration only**: Pi keeps live connection state private (see [MCP](#mcp)).
+- **MCP status is a snapshot**: Pi keeps live connection state private, so the card checks once per session through `pi mcp list --json` and adds failing tool calls (see [MCP](#mcp)).
 - **Tool names**: `bash_background` and the `mem_*` names are taken from the Gentle Shell tool list. A tool named differently is counted as Other.
 
 ## Develop

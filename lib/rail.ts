@@ -1,4 +1,4 @@
-import { titleRole, truncate, type CardTheme, type HudCard } from "./card.ts";
+import { paintGlyph, titleRole, truncate, type CardTheme, type HudCard } from "./card.ts";
 import type { CardProvider } from "./host.ts";
 import type { PatchStatus } from "./patch.ts";
 
@@ -73,7 +73,7 @@ export function createRailPart(provider: CardProvider, theme: CardTheme, hooks: 
 			const count = text.subtitle ? HEADER_GAP + theme.fg("muted", text.subtitle.slice(HEADER_GAP.length)) : "";
 			const header = `${theme.fg(glyphColor, collapsed ? "▸" : "▾")} ${theme.fg(titleColor, name)}${count}`;
 			if (collapsed) return [header];
-			return [header, ...card.body.map((row) => ROW_INDENT + truncate(row, Math.max(1, width - ROW_INDENT.length)))];
+			return [header, ...card.body.map((row, i) => ROW_INDENT + paintGlyph(truncate(row, Math.max(1, width - ROW_INDENT.length)), card.glyphRoles?.[i], theme))];
 		},
 		/** The rail re-renders a part only when this changes. */
 		digest(): string {

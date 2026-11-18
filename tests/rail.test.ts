@@ -153,3 +153,30 @@ test("railNotice explains every non-patched status and stays silent when patched
 	assert.equal(sidebarLoadNotice("4.8.0"), "gentle-hud-cards: the rail patch is applied, but gentle-pi 4.8.0's sidebar module could not be loaded, so the HUD cards render below the editor.");
 	for (const status of ["unpatched", "unknown", "missing", "no-layout", "unreadable"] as const) assert.match(railNotice({ status, version: "4.8.0" })!, /below the editor/);
 });
+
+// ---- S13: colored glyphs in the rail ----
+
+test("S13: the rail paints a row's glyph with its theme role and indents like any body row", () => {
+	const provider: CardProvider = { key: "hud-m", card: () => ({ key: "hud-m", title: "MCP", tone: "info", body: ["● a · http", "  401 bad", "● b · failed"], glyphRoles: ["success", undefined, "error"] }) };
+	const lines = createRailPart(provider, theme).render(30);
+	assert.deepEqual(lines.slice(1), ["  <success>●</success> a · http", "    401 bad", "  <error>●</error> b · failed"]);
+});
+
+test("S13: rail truncation is ANSI-safe: it cuts the visible text, never an escape, and never counts escapes as columns", () => {
+	const esc = { fg: (role: string, text: string) => `\x1b[${role === "error" ? 31 : 32}m${text}\x1b[39m`, bold: (text: string) => text };
+	const provider: CardProvider = { key: "hud-m", card: () => ({ key: "hud-m", title: "MCP", tone: "info", body: ["● a-very-long-server-name · failed"], glyphRoles: ["error"] }) };
+	const row = createRailPart(provider, esc).render(20)[1];
+	const visible = row.replace(/\x1b\[[0-9;]*m/g, "");
+	assert.equal(visible, "  ● a-very-long-ser…");
+	assert.equal([...visible].length, 20);
+	assert.ok(row.startsWith("  \x1b[31m●\x1b[39m "), JSON.stringify(row));
+	assert.equal((row.match(/\x1b/g) ?? []).length, 2);
+});
+
+test("S13: the rail digest changes when a glyph role changes", () => {
+	let role: string = "success";
+	const part = createRailPart({ key: "hud-m", card: () => ({ key: "hud-m", title: "MCP", tone: "info", body: ["● a"], glyphRoles: [role] }) }, theme);
+	const before = part.digest();
+	role = "error";
+	assert.notEqual(part.digest(), before);
+});

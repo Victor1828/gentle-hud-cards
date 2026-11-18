@@ -1,12 +1,14 @@
 import { join } from "node:path";
 import type { HudCard } from "../card.ts";
+import { stripControl, type McpServerStatus } from "./mcp-status.ts";
 
 // MCP card (T6): the servers Pi's built-in MCP extension loads, from the same
 // files and with the same merge rule (pi-coding-agent extensions/mcp/config.js):
 // `<agentDir>/mcp.json`, then `<cwd>/.pi/mcp.json` only when the project is
 // trusted. A project entry with the same name replaces the global one; a project
 // entry with no command/url/type only overrides `enabled`. Live connection state
-// is private to Pi's MCP extension, so this card shows configuration only.
+// is private to Pi's MCP extension; the live view (T11, S13) comes from the
+// `pi mcp list --json` CLI (mcp-status.ts) and failing tool calls (mcp-live.ts).
 // Only names, transport, and enabled are kept: env, headers, args and urls
 // carry secrets and never leave this reader.
 
@@ -77,6 +79,7 @@ function readServers(path: string, label: string, options: ReadMcpOptions, error
 }
 
 function serverInfo(name: string, entry: unknown, source: McpServerInfo["source"]): McpServerInfo {
+	name = stripControl(name);
 	if (!isObject(entry)) return { name, transport: "invalid", enabled: false, source };
 	return { name, transport: transportOf(entry), enabled: entry.enabled !== false, source };
 }
@@ -114,18 +117,90 @@ function serverRow(server: McpServerInfo): string {
 	return `● ${server.name} · ${server.transport}`;
 }
 
-export function mcpCard(result: McpConfigResult): HudCard {
+/**
+ * Live view merged into the card (S13): the `pi mcp list --json` result by
+ * server name and the latest failing tool call per server. Only short redacted
+ * previews are held here, never raw error text.
+ */
+export interface McpLiveView {
+	/** `checking`: the CLI is running; `done`: it answered; `unavailable`: it did not (timeout, crash, bad JSON). */
+	check: "checking" | "done" | "unavailable";
+	status: ReadonlyMap<string, McpServerStatus>;
+	liveErrors: ReadonlyMap<string, string>;
+}
+
+type Health = { kind: "ok" } | { kind: "bad"; label: string; preview?: string } | { kind: "pending"; label: string } | { kind: "plain" };
+
+const BAD_LABEL: Record<string, string> = { failed: "failed", "needs-auth": "needs auth", disconnected: "offline", closed: "offline", connecting: "offline" };
+
+function healthOf(server: McpServerInfo, live: McpLiveView): Health {
+	const liveError = live.liveErrors.get(server.name);
+	const status = live.status.get(server.name);
+	if (status) {
+		if (status.state === "connected") return liveError ? { kind: "bad", label: "failed", preview: liveError } : { kind: "ok" };
+		const label = BAD_LABEL[status.state];
+		if (label) return { kind: "bad", label, preview: liveError ?? status.preview };
+	}
+	if (liveError) return { kind: "bad", label: "failed", preview: liveError };
+	if (live.check === "checking") return { kind: "pending", label: "checking" };
+	if (live.check === "unavailable") return { kind: "plain" };
+	return { kind: "pending", label: "unchecked" };
+}
+
+export function mcpCard(result: McpConfigResult, live?: McpLiveView): HudCard {
 	const { servers, errors, projectIgnored } = result;
-	const on = servers.filter((server) => server.enabled && server.transport !== "invalid").length;
-	const body = servers.length === 0 ? ["No servers configured"] : servers.slice(0, MAX_SERVER_ROWS).map(serverRow);
-	if (servers.length > MAX_SERVER_ROWS) body.push(`+${servers.length - MAX_SERVER_ROWS} more`);
-	for (const error of errors) body.push(`⚠ ${error}`);
-	if (projectIgnored) body.push("Project mcp.json untrusted");
-	return {
+	const usable = servers.filter((server) => server.enabled && server.transport !== "invalid");
+	const health = new Map(usable.map((server) => [server, live ? healthOf(server, live) : ({ kind: "plain" } as Health)]));
+	const isBad = (server: McpServerInfo) => health.get(server)?.kind === "bad";
+	// Red servers first, so neither the row cap nor `+N more` can hide a problem.
+	const ordered = [...servers.filter(isBad), ...servers.filter((server) => !isBad(server))];
+	const redCount = ordered.filter(isBad).length;
+	const shown = servers.length === 0 ? [] : ordered.slice(0, Math.max(MAX_SERVER_ROWS, redCount));
+	const body: string[] = servers.length === 0 ? ["No servers configured"] : [];
+	const glyphRoles: Array<string | undefined> = body.map(() => undefined);
+	for (const server of shown) {
+		const h = health.get(server);
+		if (!h || h.kind === "plain") {
+			body.push(serverRow(server));
+			glyphRoles.push(undefined);
+		} else if (h.kind === "ok") {
+			body.push(`● ${server.name} · ${server.transport}`);
+			glyphRoles.push("success");
+		} else if (h.kind === "pending") {
+			body.push(`● ${server.name} · ${h.label}`);
+			glyphRoles.push("muted");
+		} else {
+			body.push(`● ${server.name} · ${h.label}`);
+			glyphRoles.push("error");
+			if (h.preview) {
+				body.push(`  ${h.preview}`);
+				glyphRoles.push(undefined);
+			}
+		}
+	}
+	if (servers.length > shown.length) {
+		body.push(`+${servers.length - shown.length} more`);
+		glyphRoles.push(undefined);
+	}
+	const extra = [...errors.map((error) => `⚠ ${error}`), ...(live?.check === "unavailable" ? ["⚠ Status unavailable"] : []), ...(projectIgnored ? ["Project mcp.json untrusted"] : [])];
+	for (const row of extra) {
+		body.push(row);
+		glyphRoles.push(undefined);
+	}
+
+	let subtitle: string;
+	if (servers.length === 0) subtitle = "None";
+	else if (!live || live.check === "unavailable") subtitle = `${usable.length}/${servers.length} on`;
+	else if (live.check === "checking") subtitle = "checking";
+	else subtitle = `${usable.filter((server) => health.get(server)?.kind === "ok").length}/${usable.length} online`;
+
+	const card: HudCard = {
 		key: "hud-mcp",
 		title: "MCP",
-		subtitle: servers.length === 0 ? "None" : `${on}/${servers.length} on`,
-		tone: errors.length > 0 ? "warning" : "info",
+		subtitle,
+		tone: errors.length > 0 || redCount > 0 ? "warning" : "info",
 		body,
 	};
+	if (glyphRoles.some((role) => role !== undefined)) card.glyphRoles = glyphRoles;
+	return card;
 }

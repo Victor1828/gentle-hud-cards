@@ -47,3 +47,39 @@ test("renderHudCard falls back when the native renderer throws or returns garbag
 	assert.deepEqual(renderHudCard(card, theme, 20, (() => "nope") as unknown as NativeRenderCard), expected);
 	assert.deepEqual(renderHudCard(card, theme, 20, undefined), expected);
 });
+
+// ---- S13: a row's glyph can be painted with a theme role, in the fallback and in the native path ----
+
+const painted: HudCard = { key: "hud-test", title: "TEST", tone: "info", body: ["● up · http", "  note", "○ off"], glyphRoles: ["success", undefined, "muted"] };
+
+test("S13: fallback paints only the first character of a row with its role; rows without a role stay plain", () => {
+	const lines = fallbackRenderCard(painted, theme, 24);
+	assert.ok(lines[1].includes("<success>●</success> up · http"), lines[1]);
+	assert.ok(plain(lines[2]).includes("│   note"), lines[2]);
+	assert.ok(lines[3].includes("<muted>○</muted> off"), lines[3]);
+	assert.deepEqual(lines.map(plain).map((line) => [...line].length), [24, 24, 24, 24, 24]);
+});
+
+test("S13: a painted row truncates by visible width before painting, so no escape code is cut or counted", () => {
+	const esc = { fg: (_role: string, text: string) => `\x1b[32m${text}\x1b[39m` };
+	const lines = fallbackRenderCard({ ...painted, body: ["● a-very-long-server-name · http"], glyphRoles: ["error"] }, esc, 16);
+	const visible = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
+	assert.equal([...visible(lines[1])].length, 16);
+	assert.equal(visible(lines[1]), "│ ● a-very-lo… │");
+	assert.ok(lines[1].includes("\x1b[32m●\x1b[39m"), "the glyph escape is whole");
+	assert.equal((lines[1].match(/\x1b/g) ?? []).length, 6, "two frame paints and the glyph paint, each opened and closed, none orphaned");
+});
+
+test("S13: wide characters count two cells when truncating and padding", () => {
+	const lines = fallbackRenderCard({ ...card, body: ["日本語日本語日本語"] }, theme, 12);
+	assert.equal(plain(lines[1]), "│ 日本語…  │");
+});
+
+test("S13: the native renderer receives the glyph already painted; rows without roles are untouched", () => {
+	const seen: string[][] = [];
+	const native: NativeRenderCard = (c) => (seen.push(c.body), ["native"]);
+	renderHudCard(painted, theme, 30, native);
+	assert.deepEqual(seen[0], ["<success>●</success> up · http", "  note", "<muted>○</muted> off"]);
+	renderHudCard(card, theme, 30, native);
+	assert.deepEqual(seen[1], ["hello"]);
+});
