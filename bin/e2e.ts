@@ -120,7 +120,12 @@ async function session(copyRoot: string, agentDir: string) {
 	};
 	const handlers = new Map<string, Handler[]>();
 	const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
-	createHudCards(deps)({ on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]), registerCommand: (name: string, options: never) => commands.set(name, options) } as never);
+	const tools = new Map<string, { execute(id: string, params: object): Promise<{ content: unknown[]; details: unknown }> }>();
+	createHudCards(deps)({
+		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+		registerCommand: (name: string, options: never) => commands.set(name, options),
+		registerTool: (tool: { name: string; execute: never }) => tools.set(tool.name, tool),
+	} as never);
 	const tui = host();
 	const notices: string[] = [];
 	let widget: Component | undefined;
@@ -145,7 +150,13 @@ async function session(copyRoot: string, agentDir: string) {
 	await fire("session_start", { reason: "startup" });
 	await fire("tool_execution_end", { toolCallId: "t3", toolName: "bash", isError: false });
 	await new Promise((resolve) => setTimeout(resolve, 0)); // Engram's async snapshot lands.
-	return { tui, cards, notices, hud, widget: () => widget, nativeCalls, titles: cards.map((card) => card.card()?.title ?? "?") };
+	/** S14: run the registered tool through the real extension, then deliver the result the way Pi does. */
+	const advise = async (params: object) => {
+		const result = await tools.get("context_advice")!.execute("advice-1", params);
+		await fire("tool_execution_end", { toolCallId: "advice-1", toolName: "context_advice", isError: false, result });
+		return result;
+	};
+	return { tui, cards, notices, hud, advise, tools, widget: () => widget, nativeCalls, titles: cards.map((card) => card.card()?.title ?? "?") };
 }
 
 async function railFrame(copyRoot: string, tui: ReturnType<typeof host>): Promise<() => string[]> {
@@ -237,6 +248,21 @@ try {
 	const hudRows = (all: string[]) => all.filter((_line, i) => i >= positions[0] && i < indexOf(plain(all), "STATUS-FOOTER"));
 	check("theme: switching dark to light changes the cards' colors", hudRows(dark).join("\n") !== hudRows(light).join("\n"));
 	check("theme: the switch keeps the same text", plain(hudRows(dark)).join("\n") === plain(hudRows(light)).join("\n"));
+
+	// S14 (after the theme check, which compares frames: the quiet tool call also counts in TOOLS): the agent's advice from the registered tool lands in the real rail frame, below the threshold rows.
+	check("S14: the extension registers the context_advice tool", rail.tools.has("context_advice"));
+	const adviceResult = await rail.advise({ action: "new_session", reason: "topic switched to MCP" });
+	const adviceFrame = frame();
+	const adviceLines = plain(adviceFrame);
+	const contextAt = indexOf(adviceLines, "▾ CONTEXT+");
+	const agentAt = indexOf(adviceLines, "✦ Agent: new session");
+	const thresholdAt = indexOf(adviceLines, "→ /compact at next break");
+	check("S14: the tool returns a short ack", JSON.stringify(adviceResult.content) === JSON.stringify([{ type: "text", text: "Advice recorded: new_session." }]), JSON.stringify(adviceResult));
+	check("S14: the real rail frame shows `✦ Agent: new session` under CONTEXT+, below the threshold row", contextAt >= 0 && thresholdAt > contextAt && agentAt > thresholdAt, JSON.stringify({ contextAt, thresholdAt, agentAt }));
+	check("S14: the reason sits on the next row, indented", agentAt >= 0 && adviceLines[agentAt + 1]?.includes("  topic switched to MCP") === true, adviceLines.slice(contextAt, contextAt + 9).join(" / "));
+	check("S14: the ✦ glyph is painted with a theme role (accent)", adviceFrame.some((line) => line.includes(sgr("accent") + "✦")), JSON.stringify(adviceFrame[agentAt]));
+	await rail.advise({ action: "keep", reason: "withdrawn" });
+	check("S14: keep clears the agent rows from the real rail frame", indexOf(plain(frame()), "✦ Agent") < 0 && indexOf(plain(frame()), "→ /compact at next break") >= 0);
 	pi.initTheme("dark");
 
 	// S12: /hud hides and shows cards in the real rail frame; the file on disk follows.

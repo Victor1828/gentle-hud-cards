@@ -78,3 +78,11 @@ test("S1: events before session_start are ignored", () => {
 	assert.equal(t.provider.card(), undefined);
 	assert.equal(t.changes(), 0);
 });
+
+test("S14: a live context_advice call is not counted and does not notify", () => {
+	const t = setup();
+	t.provider.update?.({ type: "session_start" }, t.ctx);
+	t.provider.update?.(end("g1", "context_advice"), t.ctx);
+	assert.deepEqual(t.provider.card()?.body, ["No tool calls yet"]);
+	assert.equal(t.changes(), 0);
+});

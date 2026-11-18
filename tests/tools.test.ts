@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchToolCalls, categorizeTool, emptyToolCounts, toolsCard } from "../lib/cards/tools.ts";
+import { branchToolCalls, categorizeTool, emptyToolCounts, isCountedTool, toolsCard } from "../lib/cards/tools.ts";
 
 test("S1: categorizeTool maps reads, writes, bash, memory and other", () => {
 	for (const name of ["read", "grep", "find", "ls"]) assert.equal(categorizeTool(name), "reads", name);
@@ -48,4 +48,11 @@ test("S1: no calls yet shows one hint row", () => {
 test("rail fit: the longest row fits 28 columns", () => {
 	const card = toolsCard({ reads: 99_999, writes: 99_999, bash: 99_999, memory: 99_999, other: 99_999 });
 	for (const row of [card.subtitle ?? "", ...card.body]) assert.ok(row.length <= 28, row);
+});
+
+test("S14: the HUD's own context_advice tool is not counted", () => {
+	const branch = [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "x1", name: "context_advice" }, { type: "toolCall", id: "x2", name: "read" }] } }];
+	assert.deepEqual([...branchToolCalls(branch)], [["x2", "reads"]]);
+	assert.equal(isCountedTool("context_advice"), false);
+	assert.equal(isCountedTool("read"), true);
 });

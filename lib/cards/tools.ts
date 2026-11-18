@@ -22,6 +22,13 @@ export function categorizeTool(name: string): ToolCategory {
 	return "other";
 }
 
+/** The HUD's own quiet tools are bookkeeping, not work: they are never counted. */
+const UNCOUNTED = new Set(["context_advice"]);
+
+export function isCountedTool(name: string): boolean {
+	return !UNCOUNTED.has(name);
+}
+
 export function emptyToolCounts(): ToolCounts {
 	return { reads: 0, writes: 0, bash: 0, memory: 0, other: 0 };
 }
@@ -38,7 +45,7 @@ export function branchToolCalls(branch: unknown): Map<string, ToolCategory> {
 		const message = (entry as { type?: unknown; message?: { role?: unknown; content?: unknown } } | null)?.message;
 		if ((entry as { type?: unknown })?.type !== "message" || message?.role !== "assistant" || !Array.isArray(message.content)) continue;
 		for (const block of message.content as Array<{ type?: unknown; id?: unknown; name?: unknown } | null>) {
-			if (block?.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") continue;
+			if (block?.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string" || !isCountedTool(block.name)) continue;
 			calls.set(block.id, categorizeTool(block.name));
 		}
 	}

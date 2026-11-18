@@ -1,5 +1,6 @@
 import type { CardProvider, CardUpdateContext, CardUpdateEvent } from "../host.ts";
 import { assessContext, contextCard } from "./context.ts";
+import { adviceFromBranch, adviceFromEvent, type Advice } from "./context-advice.ts";
 import { DEFAULT_RESERVE_TOKENS, readReserveTokens } from "./reserve.ts";
 
 /** turn_end samples kept for the growth estimate. */
@@ -38,14 +39,38 @@ export function createContextProvider(options: ContextProviderOptions = {}): Car
 	let compactions = 0;
 	let samples: number[] = [];
 	let usage: { tokens: number | null; contextWindow: number } | undefined;
+	// S14: the agent's latest advice; one path sets it live (tool_execution_end), session_start rebuilds it.
+	let advice: Advice | undefined;
+	let onChange: (() => void) | undefined;
 
 	return {
 		key: "hud-context",
+		watch(listener: () => void): void {
+			onChange = listener;
+		},
 		update(event: CardUpdateEvent, ctx: CardUpdateContext): void {
+			if (event.type === "tool_execution_end" && started) {
+				const next = adviceFromEvent(event);
+				// null = not a successful, well-formed context_advice result: ignore it.
+				if (next !== null && (next?.action !== advice?.action || next?.reason !== advice?.reason)) {
+					advice = next;
+					try {
+						onChange?.();
+					} catch {
+						// A broken render request must not break the update.
+					}
+				}
+			}
+			if (event.type === "session_compact") advice = undefined; // it judged the old context
 			if (event.type === "session_start") {
 				started = true;
 				samples = [];
 				compactions = 0;
+				try {
+					advice = adviceFromBranch(ctx.sessionManager?.getBranch());
+				} catch {
+					advice = undefined;
+				}
 				try {
 					reserveTokens = readReserve(ctx);
 				} catch {
@@ -70,6 +95,7 @@ export function createContextProvider(options: ContextProviderOptions = {}): Car
 					compactions,
 					avgTurnGrowth: meanGrowth(samples),
 				}),
+				advice,
 			);
 		},
 	};

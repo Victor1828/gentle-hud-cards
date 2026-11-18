@@ -141,3 +141,38 @@ test("S3: every row fits the ~30-column rail for realistic sessions", () => {
 	for (const input of cases) for (const row of contextCard(assessContext(input)).body) assert.ok([...row].length <= 28, `${row} (${[...row].length})`);
 	assert.equal(contextCard(assessContext(cases[3])).body[1], "Compact in 982k · ~99+ turns");
 });
+
+const advised = (advice: Parameters<typeof contextCard>[1], input = { ...base, contextWindow: 200_000, tokens: 90_000 }) => contextCard(assessContext(input), advice);
+
+test("S14: new_session advice adds `✦ Agent: new session` and the indented reason after the threshold rows, which stay unchanged", () => {
+	const input = { ...base, contextWindow: 200_000, tokens: 90_000 };
+	const plain = contextCard(assessContext(input));
+	const c = advised({ action: "new_session", reason: "topic switched to MCP" }, input);
+	assert.deepEqual(c.body, [...plain.body, "✦ Agent: new session", "  topic switched to MCP"]);
+	assert.deepEqual(c.glyphRoles, [undefined, undefined, undefined, undefined, "accent", undefined]);
+	assert.deepEqual([c.key, c.title, c.subtitle, c.tone, c.keepToneColor], [plain.key, plain.title, plain.subtitle, plain.tone, plain.keepToneColor]);
+});
+
+test("S14: compact advice reads `✦ Agent: /compact`", () => {
+	assert.deepEqual(advised({ action: "compact", reason: "long thread" }).body.slice(-2), ["✦ Agent: /compact", "  long thread"]);
+});
+
+test("S14: an empty reason adds no reason row; the reason is sanitized and cut to the rail width", () => {
+	assert.deepEqual(advised({ action: "compact", reason: "" }).body.slice(-1), ["✦ Agent: /compact"]);
+	const c = advised({ action: "new_session", reason: "\x1b[31mtopic\x1b[0m\n\tswitched   to a completely different MCP task" });
+	const row = c.body[c.body.length - 1];
+	assert.equal(row, "  topic switched to a compl…");
+	assert.equal([...row].length, 28);
+	assert.deepEqual(c.glyphRoles?.length, c.body.length - 1 + 1);
+});
+
+test("S14: no advice (undefined) leaves the card byte-identical to before, with no glyphRoles", () => {
+	const input = { ...base, contextWindow: 200_000, tokens: 90_000, avgTurnGrowth: 10_000 };
+	assert.equal(JSON.stringify(contextCard(assessContext(input), undefined)), JSON.stringify(contextCard(assessContext(input))));
+	assert.equal("glyphRoles" in contextCard(assessContext(input)), false);
+});
+
+test("S14: agent rows also show on the unknown-usage card", () => {
+	const c = contextCard(assessContext({ ...base, tokens: null }), { action: "new_session", reason: "r" });
+	assert.deepEqual(c.body, ["Usage unknown", "Compactions: 0", "✦ Agent: new session", "  r"]);
+});

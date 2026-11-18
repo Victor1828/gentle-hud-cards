@@ -1,5 +1,5 @@
 import type { CardProvider, CardUpdateContext, CardUpdateEvent } from "../host.ts";
-import { branchToolCalls, categorizeTool, emptyToolCounts, toolsCard, type ToolCategory } from "./tools.ts";
+import { branchToolCalls, categorizeTool, emptyToolCounts, isCountedTool, toolsCard, type ToolCategory } from "./tools.ts";
 
 interface ToolEndEvent extends CardUpdateEvent {
 	toolCallId?: unknown;
@@ -59,6 +59,7 @@ export function createToolsProvider(): CardProvider {
 			const end = event as ToolEndEvent;
 			if (isNested(end)) return;
 			const name = typeof end.toolName === "string" ? end.toolName : "";
+			if (!isCountedTool(name)) return;
 			// No id to dedupe against: still a finished call, so give it a unique key.
 			const id = typeof end.toolCallId === "string" && end.toolCallId !== "" ? end.toolCallId : `anonymous:${anonymous++}`;
 			if (calls.has(id)) return;

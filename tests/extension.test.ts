@@ -169,3 +169,15 @@ test("T7: providers receive tool_execution_end with its payload, and the earlier
 test("T7: the default provider list registers the Tools card after MCP", () => {
 	assert.deepEqual(defaultProviders.map((entry) => entry.key), ["hud-context", "hud-engram", "hud-mcp", "hud-tools"]);
 });
+
+test("S14: the extension registers the quiet context_advice tool when CONTEXT+ is present, and never breaks if registerTool throws", () => {
+	const registered: Array<{ name: string }> = [];
+	const run = (providers: CardProvider[], registerTool: (tool: { name: string }) => void) =>
+		createHudCards({ providers, locateRoot: () => "/gp", patchStatus: () => report("unpatched"), loadRenderCard: async () => undefined, loadSidebarPart: async () => undefined })({ on() {}, registerCommand() {}, registerTool } as never);
+	run([provider("hud-context")], (tool) => registered.push(tool));
+	assert.deepEqual(registered.map((tool) => tool.name), ["context_advice"]);
+	run([provider("hud-engram")], (tool) => registered.push(tool));
+	assert.equal(registered.length, 1, "no CONTEXT+ provider, no tool");
+	assert.doesNotThrow(() => run([provider("hud-context")], () => { throw new Error("boom"); }));
+	assert.doesNotThrow(() => createHudCards({ providers: [provider("hud-context")], locateRoot: () => "/gp", patchStatus: () => report("unpatched"), loadRenderCard: async () => undefined, loadSidebarPart: async () => undefined })({ on() {}, registerCommand() {} } as never), "a host without registerTool");
+});

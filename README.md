@@ -47,6 +47,26 @@ When Pi does not know the usage yet (right after a compaction, before the next r
 - **Reserve tokens**: no Pi extension API exposes `compaction.reserveTokens`, so `lib/cards/reserve.ts` reads it at session start from the project `.pi/settings.json`, then the global agent dir (`PI_CODING_AGENT_DIR`, else `~/.gentle-shell/agent`, else `~/.pi/agent`), honoring `compaction.modelOverrides`, and defaults to 16384.
 - **Compactions** are counted from `compaction` entries on the session branch plus `session_compact` events, and reset on every `session_start`.
 
+### Agent advice
+
+The thresholds only see tokens. The agent also sees the conversation, so it can tell you when a new session is better, e.g. the topic changed. It does that with a quiet `context_advice` tool, and the card adds the advice below the threshold rows, which stay as they are:
+
+```
+CONTEXT+  Mature
+  45% · 90k / 200k
+  Compact in 93.6k
+  → /compact at next break
+  ✦ Agent: new session
+    topic switched to MCP
+```
+
+- **Tool**: `context_advice({ action, reason })`. `action` is `keep`, `compact` or `new_session`; `reason` is a short English string (at most 40 characters). The row reads `✦ Agent: new session` or `✦ Agent: /compact`, followed by the reason on an indented row, cut to the card width. The reason is sanitized (ANSI and control characters stripped, whitespace collapsed). The `✦` uses the `accent` theme role.
+- **When the agent calls it**: only when its advice changes (never every turn), and it does not mention the call in its reply unless asked. `keep` withdraws earlier advice, and the row disappears.
+- **Quiet**: the tool renders nothing in the transcript (no call row, no result row). The card is the only trace.
+- **Token cost**: the tool is declared on every request: about 190 tokens for the schema, description and guideline (see `createContextAdviceTool` in `lib/cards/context-advice.ts`). It is registered only while the CONTEXT+ provider is loaded; hiding the card with `/hud` does not unregister it.
+- **Rebuild**: on `session_start` (a new session, resume, or `/reload`) the card takes the latest successful `context_advice` result on the session branch that comes after the latest compaction. Failed or malformed results are skipped.
+- **Clear**: a compaction (`session_compact`) clears the advice, because it judged the old context. A later call sets it again.
+
 ## Engram
 
 The `ENGRAM` card shows whether the local Engram memory daemon is up, how many memories this project has, and how old its last handoff (the newest `session_summary`) is, e.g. `Online · v3.7.0`, `Memories: 42`, `Last handoff: 13h ago`.
@@ -99,7 +119,7 @@ The `TOOLS` card counts this session's tool calls by category, e.g. `TOOLS  20 c
 | Writes | `edit`, `write` |
 | Bash | `bash`, `bash_background`, `powershell` |
 | Memory | `mem_*`, `mcp__engram__*` |
-| Other | everything else (`codemode`, `subagent_*`, other MCP tools, ...) |
+| Other | everything else (`codemode`, `subagent_*`, other MCP tools, ...). The HUD's own quiet `context_advice` tool is not counted. |
 
 - **Live count**: every finished call (`tool_execution_end`, blocked calls included) adds one, once per call id.
 - **Model-issued only**: calls made inside another tool (codemode's inner calls, with `parentToolCallId`) are not counted; `codemode` itself counts once as Other. This keeps the live count equal to a rebuild from the session.
@@ -168,6 +188,7 @@ It runs the real extension against the installed gentle-pi, without a TTY.
 | `rail: ...` | The patched rail draws CONTEXT+, ENGRAM, MCP, and TOOLS in order above Status, with live data and no notice. The below-editor copy is blank while the rail owns the host. |
 | `theme: ...` | Switching Pi's theme from dark to light recolors the cards on the next frame and keeps the same text. |
 | `hud: ...` | `/hud` (the real handler, scripted selector, temp agent dir) hides MCP from the real rail frame and from the below-editor stack, writes the expected file, and showing it again restores both. |
+| `S14: ...` | The real extension registers `context_advice`; executing it with `new_session` and a reason puts `✦ Agent: new session` and the reason under CONTEXT+ in the real rail frame, below the threshold row; `keep` removes them. |
 | `fallback: ...` | An unpatched rail draws no HUD card, one notice explains why, and the four cards stack below the editor through gentle-pi's `renderCard`. |
 
 The e2e uses fixed card data and a fake MCP status runner (no Pi or server starts), so it never depends on the Engram daemon or your MCP config. Its `S13: ...` checks look at the MCP card in the real rail frame: online circle in the `success` role, failed circle in the `error` role, the redacted preview, and the same through gentle-pi's `renderCard` in the fallback. It does not drive a live Gentle Shell window; check that by eye after `/reload`.

@@ -1,4 +1,5 @@
-import type { CardTone, HudCard } from "../card.ts";
+import { truncate, type CardTone, type HudCard } from "../card.ts";
+import { sanitizeReason, type Advice } from "./context-advice.ts";
 
 // Contexto+ (S8). Every threshold lives here, named, so the rule is tuned in one place.
 
@@ -96,7 +97,11 @@ function recommendationLine(a: ContextAssessment): string | undefined {
 
 const MAX_SHOWN_TURNS = 99;
 
-export function contextCard(a: ContextAssessment): HudCard {
+const AGENT_LABEL: Record<Advice["action"], string> = { new_session: "new session", compact: "/compact" };
+/** The reason row is indented two columns and cut to the card's ~28 columns. */
+const REASON_COLUMNS = 26;
+
+export function contextCard(a: ContextAssessment, advice?: Advice): HudCard {
 	const body: string[] = [];
 	if (a.level === "unknown" || a.tokens === undefined) {
 		body.push("Usage unknown");
@@ -110,5 +115,16 @@ export function contextCard(a: ContextAssessment): HudCard {
 	body.push(`Compactions: ${a.compactions}`);
 	const line = recommendationLine(a);
 	if (line) body.push(line);
-	return { key: "hud-context", title: "CONTEXT+", subtitle: LEVEL_LABEL[a.level], body, tone: LEVEL_TONE[a.level], keepToneColor: true };
+	const card: HudCard = { key: "hud-context", title: "CONTEXT+", subtitle: LEVEL_LABEL[a.level], body, tone: LEVEL_TONE[a.level], keepToneColor: true };
+	if (!advice) return card;
+	// S14: the agent's own advice sits below the threshold rows, which stay as they are.
+	const glyphRoles: Array<string | undefined> = body.map(() => undefined);
+	body.push(`✦ Agent: ${AGENT_LABEL[advice.action]}`);
+	glyphRoles.push("accent");
+	const reason = sanitizeReason(advice.reason);
+	if (reason) {
+		body.push(`  ${truncate(reason, REASON_COLUMNS)}`);
+		glyphRoles.push(undefined);
+	}
+	return { ...card, glyphRoles };
 }

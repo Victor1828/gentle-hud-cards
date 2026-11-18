@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { NativeRenderCard } from "../lib/card.ts";
+import { createContextAdviceTool } from "../lib/cards/context-advice.ts";
 import { createContextProvider } from "../lib/cards/context-live.ts";
 import { createEngramProvider } from "../lib/cards/engram-live.ts";
 import { createMcpProvider } from "../lib/cards/mcp-live.ts";
@@ -77,6 +78,14 @@ export function createHudCards(deps: HudCardsDeps): (pi: ExtensionAPI) => void {
 		};
 		// tool_execution_end fires for every finished call, blocked ones included.
 		for (const type of ["session_start", "turn_end", "message_end", "session_compact", "tool_execution_end", "session_shutdown"]) pi.on(type as "turn_end", feed(type));
+		// S14: the quiet advice tool feeds CONTEXT+; its result reaches the provider through tool_execution_end above.
+		if (providers.some((entry) => entry.key === "hud-context")) {
+			try {
+				pi.registerTool?.(createContextAdviceTool() as never);
+			} catch {
+				// A host that cannot register the tool still shows every card.
+			}
+		}
 		// Async providers (Engram's HTTP fetch) land between Pi events; redraw when they do.
 		for (const provider of providers) {
 			try {

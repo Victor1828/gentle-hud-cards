@@ -167,3 +167,92 @@ test("T11b: session_shutdown changes nothing and never reads the stale context",
 	provider.update?.({ type: "session_shutdown" }, { getContextUsage: () => { throw new Error("stale ctx"); }, sessionManager: { getBranch: () => { throw new Error("stale ctx"); } } });
 	assert.equal(JSON.stringify(provider.card()), before);
 });
+
+// S14: agent advice held by the provider.
+const adviceCtx = (branch: unknown[] = []) => ({ getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000 }), sessionManager: { getBranch: () => branch } });
+const adviceEnd = (details: unknown, extra: object = {}) => ({ type: "tool_execution_end", toolCallId: "t", toolName: "context_advice", isError: false, result: { content: [], details }, ...extra });
+const started = (branch: unknown[] = []) => {
+	const provider = createContextProvider({ readReserve: () => 16_384 });
+	provider.update?.({ type: "session_start" }, adviceCtx(branch));
+	return provider;
+};
+const rows = (provider: CardProvider) => provider.card()?.body.slice(4);
+const toolResult = (details: unknown) => ({ type: "message", message: { role: "toolResult", toolName: "context_advice", isError: false, details } });
+
+test("S14: a successful context_advice tool_execution_end adds the agent rows and requests one render", () => {
+	const provider = started();
+	let renders = 0;
+	provider.watch?.(() => renders++);
+	assert.deepEqual(rows(provider), []);
+	provider.update?.(adviceEnd({ action: "new_session", reason: "topic switched to MCP" }), adviceCtx());
+	assert.deepEqual(rows(provider), ["✦ Agent: new session", "  topic switched to MCP"]);
+	assert.deepEqual(provider.card()?.body.slice(0, 4), ["45% · 90k / 200k", "Compact in 93.6k", "Compactions: 0", "→ /compact at next break"]);
+	assert.equal(renders, 1);
+});
+
+test("S14: keep clears the advice and requests a render; compact replaces new_session", () => {
+	const provider = started();
+	let renders = 0;
+	provider.watch?.(() => renders++);
+	provider.update?.(adviceEnd({ action: "new_session", reason: "a" }), adviceCtx());
+	provider.update?.(adviceEnd({ action: "compact", reason: "b" }), adviceCtx());
+	assert.deepEqual(rows(provider), ["✦ Agent: /compact", "  b"]);
+	provider.update?.(adviceEnd({ action: "keep", reason: "c" }), adviceCtx());
+	assert.deepEqual(rows(provider), []);
+	assert.equal(provider.card()?.glyphRoles, undefined);
+	assert.equal(renders, 3);
+});
+
+test("S14: failed calls, other tools and malformed details change nothing and request no render", () => {
+	const provider = started();
+	let renders = 0;
+	provider.watch?.(() => renders++);
+	provider.update?.(adviceEnd({ action: "new_session", reason: "kept" }), adviceCtx());
+	renders = 0;
+	for (const event of [adviceEnd({ action: "keep", reason: "" }, { isError: true }), adviceEnd({ action: "keep", reason: "" }, { toolName: "read" }), adviceEnd("garbage"), adviceEnd(undefined), adviceEnd({ action: "bogus" }), { type: "tool_execution_end", toolName: "context_advice", isError: false }]) {
+		provider.update?.(event, adviceCtx());
+		assert.deepEqual(rows(provider), ["✦ Agent: new session", "  kept"]);
+	}
+	assert.equal(renders, 0);
+});
+
+test("S14: a throwing watch listener never breaks the update", () => {
+	const provider = started();
+	provider.watch?.(() => {
+		throw new Error("boom");
+	});
+	assert.doesNotThrow(() => provider.update?.(adviceEnd({ action: "compact", reason: "r" }), adviceCtx()));
+	assert.deepEqual(rows(provider), ["✦ Agent: /compact", "  r"]);
+});
+
+test("S14: session_start rebuilds the latest advice after the latest compaction from the branch", () => {
+	const a = { action: "compact", reason: "one" };
+	const b = { action: "new_session", reason: "two" };
+	assert.deepEqual(rows(started([toolResult(a), toolResult(b)])), ["✦ Agent: new session", "  two"]);
+	assert.deepEqual(rows(started([toolResult(b), { type: "compaction" }, toolResult(a)])), ["✦ Agent: /compact", "  one"]);
+	assert.deepEqual(rows(started([toolResult(b), { type: "compaction" }])), [], "advice before a compaction is ignored");
+	assert.deepEqual(rows(started([toolResult(b), toolResult({ action: "keep", reason: "" })])), []);
+	assert.deepEqual(rows(started([toolResult("junk"), null, { type: "message" }])), []);
+});
+
+test("S14: a new session_start replaces earlier advice (and an unreadable branch clears it)", () => {
+	const provider = started([toolResult({ action: "new_session", reason: "x" })]);
+	assert.equal(rows(provider)?.length, 2);
+	provider.update?.({ type: "session_start" }, { getContextUsage: () => ({ tokens: 90_000, contextWindow: 200_000 }), sessionManager: { getBranch: () => { throw new Error("no"); } } });
+	assert.deepEqual(rows(provider), []);
+});
+
+test("S14: session_compact clears the advice (it judged the old context)", () => {
+	const provider = started();
+	provider.update?.(adviceEnd({ action: "new_session", reason: "x" }), adviceCtx());
+	provider.update?.({ type: "session_compact" }, adviceCtx([{ type: "compaction" }]));
+	assert.equal(provider.card()?.body.includes("✦ Agent: new session"), false);
+	assert.deepEqual(provider.card()?.body.slice(2, 3), ["Compactions: 1"]);
+});
+
+test("S14: advice before session_start is ignored; no advice leaves the card as before", () => {
+	const provider = createContextProvider({ readReserve: () => 16_384 });
+	provider.update?.(adviceEnd({ action: "new_session", reason: "x" }), adviceCtx());
+	assert.equal(provider.card(), undefined);
+	assert.deepEqual(started().card()?.body, ["45% · 90k / 200k", "Compact in 93.6k", "Compactions: 0", "→ /compact at next break"]);
+});
